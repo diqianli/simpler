@@ -83,28 +83,39 @@ class CCECToolchain(Toolchain):
 
 
 class Gxx15Toolchain(Toolchain):
-    """g++-15 compiler for simulation kernels."""
+    """g++-15 compiler for simulation kernels (or clang++ on macOS)."""
 
     def __init__(self):
         super().__init__()
-        self.cxx_path = "g++-15"
+        # On macOS, use clang++ (aliased as g++), on Linux use g++-15
+        import sys
+        if sys.platform == "darwin":
+            self.cxx_path = "clang++"
+        else:
+            self.cxx_path = "g++-15"
 
     def get_compile_flags(self, **kwargs) -> List[str]:
-        return [
+        import sys
+        flags = [
             "-shared", "-O2", "-fPIC",
-            "-std=c++23",
-            "-fpermissive",
-            "-Wno-macro-redefined",
-            "-Wno-ignored-attributes",
+            "-std=c++17",  # Use C++17 for better compatibility
             "-D__CPU_SIM",
             "-DPTO_CPU_MAX_THREADS=1",
             "-DNDEBUG",
         ]
+        # Add Linux-specific flags
+        if sys.platform != "darwin":
+            flags.extend([
+                "-fpermissive",
+                "-Wno-macro-redefined",
+                "-Wno-ignored-attributes",
+            ])
+        return flags
 
     def get_cmake_args(self) -> List[str]:
         return [
-            "-DCMAKE_C_COMPILER=gcc",
-            "-DCMAKE_CXX_COMPILER=g++",
+            "-DCMAKE_C_COMPILER=clang",
+            "-DCMAKE_CXX_COMPILER=clang++",
         ]
 
 
@@ -113,15 +124,19 @@ class GxxToolchain(Toolchain):
 
     def __init__(self):
         super().__init__()
-        self.cxx_path = "g++"
+        import sys
+        if sys.platform == "darwin":
+            self.cxx_path = "clang++"
+        else:
+            self.cxx_path = "g++"
 
     def get_compile_flags(self, **kwargs) -> List[str]:
         return ["-shared", "-fPIC", "-O3", "-g", "-std=c++17"]
 
     def get_cmake_args(self) -> List[str]:
         args = [
-            "-DCMAKE_C_COMPILER=gcc",
-            "-DCMAKE_CXX_COMPILER=g++",
+            "-DCMAKE_C_COMPILER=clang",
+            "-DCMAKE_CXX_COMPILER=clang++",
         ]
         if self.ascend_home_path:
             args.append(f"-DASCEND_HOME_PATH={self.ascend_home_path}")

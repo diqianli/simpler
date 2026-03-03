@@ -12,6 +12,16 @@
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <chrono>
+
+// High-resolution timer for performance measurement
+static auto g_log_start_time = std::chrono::high_resolution_clock::now();
+
+// Get elapsed time in microseconds since first log call
+static int64_t get_elapsed_us() {
+    auto now = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration_cast<std::chrono::microseconds>(now - g_log_start_time).count();
+}
 
 // =============================================================================
 // Log Enable Flags (Simulation: controlled by PTO_LOG_LEVEL)
@@ -97,7 +107,8 @@ void dev_log_debug(const char* func, const char* fmt, ...) {
 void dev_log_info(const char* func, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    printf("[INFO] %s: ", func);
+    int64_t ts = get_elapsed_us();
+    printf("[INFO] [%7ld.%03ld ms] %s: ", ts / 1000, ts % 1000, func);
     vprintf(fmt, args);
     printf("\n");
     va_end(args);

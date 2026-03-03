@@ -1,0 +1,1161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PTO Runtime 控制流算法可视化</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, #00d2ff, #3a7bd5);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+        }
+
+        .section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 25px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .section h2 {
+            color: #00d2ff;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(0, 210, 255, 0.3);
+        }
+
+        /* Architecture Diagram */
+        .architecture {
+            display: flex;
+            justify-content: center;
+            gap: 50px;
+            flex-wrap: wrap;
+            padding: 30px;
+        }
+
+        .arch-box {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+            padding: 25px;
+            text-align: center;
+            min-width: 280px;
+            border: 2px solid;
+            transition: all 0.5s ease;
+        }
+
+        .arch-box.host { border-color: #ff6b6b; }
+        .arch-box.device { border-color: #4ecdc4; }
+
+        .arch-box h3 {
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .arch-box.host h3 { color: #ff6b6b; }
+        .arch-box.device h3 { color: #4ecdc4; }
+
+        .component {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+            transition: all 0.3s ease;
+        }
+
+        .component:hover {
+            transform: scale(1.05);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .component.orchestrator { border-left: 4px solid #ffd93d; }
+        .component.scheduler { border-left: 4px solid #6bcb77; }
+        .component.aicore { border-left: 4px solid #4d96ff; }
+
+        .shared-memory {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .memory-line {
+            width: 100px;
+            height: 4px;
+            background: linear-gradient(90deg, #ff6b6b, #4ecdc4);
+            position: relative;
+        }
+
+        .memory-line::before,
+        .memory-line::after {
+            content: '';
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            top: -4px;
+            animation: pulse 1.5s infinite;
+        }
+
+        .memory-line::before {
+            left: -6px;
+            background: #ff6b6b;
+        }
+
+        .memory-line::after {
+            right: -6px;
+            background: #4ecdc4;
+            animation-delay: 0.5s;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.5); opacity: 0.5; }
+        }
+
+        /* State Machine */
+        .state-machine {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 20px;
+        }
+
+        .state {
+            width: 120px;
+            height: 80px;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            transition: all 0.5s ease;
+            position: relative;
+            cursor: pointer;
+        }
+
+        .state.pending { background: linear-gradient(135deg, #636e72, #2d3436); }
+        .state.ready { background: linear-gradient(135deg, #00b894, #00a085); }
+        .state.running { background: linear-gradient(135deg, #0984e3, #0769b8); }
+        .state.completed { background: linear-gradient(135deg, #fdcb6e, #e17055); }
+        .state.consumed { background: linear-gradient(135deg, #a29bfe, #6c5ce7); }
+
+        .state.active {
+            transform: scale(1.15);
+            box-shadow: 0 0 30px rgba(255, 255, 255, 0.3);
+        }
+
+        .arrow {
+            display: flex;
+            align-items: center;
+            color: #888;
+            font-size: 1.5em;
+        }
+
+        .state-label {
+            font-size: 0.75em;
+            opacity: 0.8;
+            margin-top: 5px;
+        }
+
+        /* Ring Buffer Visualization */
+        .ring-buffer-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 40px;
+            padding: 20px;
+        }
+
+        .ring-buffer {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 5px;
+            max-width: 600px;
+        }
+
+        .slot {
+            width: 60px;
+            height: 60px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            position: relative;
+        }
+
+        .slot.empty { background: rgba(255, 255, 255, 0.05); }
+        .slot.allocated { background: linear-gradient(135deg, #4ecdc4, #44a08d); }
+        .slot.consumed { background: linear-gradient(135deg, #a29bfe, #6c5ce7); opacity: 0.6; }
+
+        .slot.current {
+            border-color: #ffd93d;
+            box-shadow: 0 0 20px rgba(255, 217, 61, 0.5);
+        }
+
+        .slot-label {
+            position: absolute;
+            bottom: -20px;
+            font-size: 0.7em;
+            color: #888;
+        }
+
+        .heap-visual {
+            width: 100%;
+            max-width: 600px;
+            height: 50px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .heap-used {
+            height: 100%;
+            background: linear-gradient(90deg, #4ecdc4, #44a08d);
+            transition: width 0.5s ease;
+            position: relative;
+        }
+
+        .heap-pointer {
+            position: absolute;
+            top: -25px;
+            transform: translateX(-50%);
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .heap-pointer.top { color: #ff6b6b; }
+        .heap-pointer.tail { color: #4ecdc4; }
+
+        /* Task Execution Demo */
+        .demo-container {
+            padding: 20px;
+        }
+
+        .demo-controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #00d2ff, #3a7bd5);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .task-graph {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 30px;
+            min-height: 200px;
+            flex-wrap: wrap;
+        }
+
+        .task-node {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            transition: all 0.5s ease;
+            position: relative;
+            border: 3px solid;
+        }
+
+        .task-node.task-a { border-color: #ff6b6b; background: rgba(255, 107, 107, 0.2); }
+        .task-node.task-b { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.2); }
+        .task-node.task-c { border-color: #ffd93d; background: rgba(255, 217, 61, 0.2); }
+
+        .task-node.pending { opacity: 0.5; }
+        .task-node.ready { box-shadow: 0 0 20px rgba(255, 255, 255, 0.3); }
+        .task-node.running {
+            animation: running-pulse 0.5s infinite;
+        }
+        .task-node.completed { opacity: 1; }
+        .task-node.consumed { opacity: 0.4; }
+
+        @keyframes running-pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+
+        .dependency-arrow {
+            font-size: 2em;
+            color: #888;
+            position: relative;
+        }
+
+        .dependency-arrow.active {
+            color: #4ecdc4;
+        }
+
+        .task-state {
+            font-size: 0.7em;
+            margin-top: 5px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        /* Refcount Display */
+        .refcount-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .refcount-card {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .refcount-card h4 {
+            margin-bottom: 10px;
+            font-size: 0.9em;
+        }
+
+        .refcount-bar {
+            height: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 5px 0;
+        }
+
+        .refcount-fill {
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+
+        .refcount-fill.fanin { background: linear-gradient(90deg, #4ecdc4, #44a08d); }
+        .refcount-fill.fanout { background: linear-gradient(90deg, #ff6b6b, #ee5a5a); }
+
+        .refcount-text {
+            font-size: 0.8em;
+            color: #888;
+            text-align: right;
+        }
+
+        /* Timeline */
+        .timeline {
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .timeline-entry {
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateX(-20px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .timeline-time {
+            font-weight: bold;
+            color: #00d2ff;
+            min-width: 50px;
+        }
+
+        .timeline-event {
+            color: #ccc;
+        }
+
+        /* Code Block */
+        .code-block {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+            padding: 20px;
+            overflow-x: auto;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.9em;
+            line-height: 1.6;
+        }
+
+        .code-block .keyword { color: #ff79c6; }
+        .code-block .function { color: #50fa7b; }
+        .code-block .comment { color: #6272a4; }
+        .code-block .string { color: #f1fa8c; }
+        .code-block .number { color: #bd93f9; }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border: none;
+            border-radius: 8px 8px 0 0;
+            color: #888;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .tab.active {
+            background: rgba(0, 210, 255, 0.2);
+            color: #00d2ff;
+        }
+
+        .tab:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Ready Queue */
+        .ready-queue {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+
+        .queue-label {
+            font-weight: bold;
+            min-width: 120px;
+        }
+
+        .queue-items {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .queue-item {
+            width: 50px;
+            height: 50px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: scale(0.5); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .queue-item.empty {
+            border: 2px dashed rgba(255, 255, 255, 0.2);
+            color: #666;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>PTO Runtime 控制流算法</h1>
+        <p class="subtitle">交互式可视化教程 - 理解异构任务调度的核心原理</p>
+
+        <!-- Section 1: Architecture -->
+        <div class="section">
+            <h2>1. 整体架构</h2>
+            <div class="architecture">
+                <div class="arch-box host">
+                    <h3>🖥️ Host CPU (经理)</h3>
+                    <div class="component orchestrator">
+                        <strong>Orchestrator</strong><br>
+                        <small>协调器 - 构建任务图</small>
+                    </div>
+                    <div style="font-size: 0.8em; color: #888; margin-top: 10px;">
+                        • 分配任务槽位<br>
+                        • 分配输出缓冲区<br>
+                        • 查找依赖关系
+                    </div>
+                </div>
+
+                <div class="shared-memory">
+                    <div style="text-align: center;">
+                        <div class="memory-line"></div>
+                        <div style="margin-top: 15px; font-size: 0.9em;">共享内存通信</div>
+                    </div>
+                </div>
+
+                <div class="arch-box device">
+                    <h3>⚡ Device (厨房)</h3>
+                    <div class="component scheduler">
+                        <strong>Scheduler</strong><br>
+                        <small>调度器 - 管理任务生命周期</small>
+                    </div>
+                    <div class="component aicore">
+                        <strong>AICore</strong><br>
+                        <small>CUBE | VECTOR - 执行计算</small>
+                    </div>
+                    <div style="font-size: 0.8em; color: #888; margin-top: 10px;">
+                        • 状态转换<br>
+                        • 依赖触发<br>
+                        • 内存回收
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 2: State Machine -->
+        <div class="section">
+            <h2>2. 任务状态机</h2>
+            <p style="margin-bottom: 20px; color: #888;">点击状态查看详细说明</p>
+            <div class="state-machine">
+                <div class="state pending" onclick="showStateInfo('pending')">
+                    PENDING
+                    <span class="state-label">等待依赖</span>
+                </div>
+                <div class="arrow">→</div>
+                <div class="state ready" onclick="showStateInfo('ready')">
+                    READY
+                    <span class="state-label">准备执行</span>
+                </div>
+                <div class="arrow">→</div>
+                <div class="state running" onclick="showStateInfo('running')">
+                    RUNNING
+                    <span class="state-label">正在执行</span>
+                </div>
+                <div class="arrow">→</div>
+                <div class="state completed" onclick="showStateInfo('completed')">
+                    COMPLETED
+                    <span class="state-label">执行完成</span>
+                </div>
+                <div class="arrow">→</div>
+                <div class="state consumed" onclick="showStateInfo('consumed')">
+                    CONSUMED
+                    <span class="state-label">完全消耗</span>
+                </div>
+            </div>
+            <div id="state-info" style="margin-top: 20px; padding: 15px; background: rgba(0,0,0,0.3); border-radius: 10px; min-height: 60px;">
+                <p>👆 点击上方状态查看详细说明</p>
+            </div>
+        </div>
+
+        <!-- Section 3: Ring Buffer -->
+        <div class="section">
+            <h2>3. 环形缓冲区</h2>
+            <div class="ring-buffer-container">
+                <div>
+                    <h4 style="margin-bottom: 15px; text-align: center;">Task Ring (任务槽位环)</h4>
+                    <div class="ring-buffer" id="task-ring">
+                        <!-- Slots will be generated by JS -->
+                    </div>
+                    <div style="display: flex; justify-content: space-around; margin-top: 30px;">
+                        <div style="text-align: center;">
+                            <span style="color: #ff6b6b;">●</span> current_index = <span id="current-index">0</span>
+                        </div>
+                        <div style="text-align: center;">
+                            <span style="color: #4ecdc4;">●</span> last_task_alive = <span id="last-alive">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="width: 100%;">
+                    <h4 style="margin-bottom: 15px; text-align: center;">Heap Ring (内存堆环)</h4>
+                    <div class="heap-visual">
+                        <div class="heap-used" id="heap-used" style="width: 0%;">
+                            <div class="heap-pointer top" style="left: 100%;">top</div>
+                        </div>
+                        <div class="heap-pointer tail" id="heap-tail" style="left: 0%;">tail</div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.8em; color: #888;">
+                        <span>0</span>
+                        <span>HEAP_SIZE (可用内存)</span>
+                        <span>100%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 4: Interactive Demo -->
+        <div class="section">
+            <h2>4. 交互式演示</h2>
+            <div class="demo-container">
+                <div class="demo-controls">
+                    <button class="btn btn-primary" onclick="startDemo()">▶ 开始演示</button>
+                    <button class="btn btn-secondary" onclick="stepDemo()" id="step-btn">⏭ 单步执行</button>
+                    <button class="btn btn-secondary" onclick="resetDemo()">↺ 重置</button>
+                    <button class="btn btn-secondary" onclick="toggleAutoRun()" id="auto-btn">🔄 自动运行</button>
+                </div>
+
+                <div class="task-graph" id="task-graph">
+                    <div class="task-node task-a pending" id="task-a">
+                        A
+                        <span class="task-state" id="task-a-state">PENDING</span>
+                    </div>
+                    <div class="dependency-arrow" id="arrow-ab">→</div>
+                    <div class="task-node task-b pending" id="task-b">
+                        B
+                        <span class="task-state" id="task-b-state">PENDING</span>
+                    </div>
+                    <div class="dependency-arrow" id="arrow-bc">→</div>
+                    <div class="task-node task-c pending" id="task-c">
+                        C
+                        <span class="task-state" id="task-c-state">PENDING</span>
+                    </div>
+                </div>
+
+                <div class="refcount-panel">
+                    <div class="refcount-card">
+                        <h4 style="color: #ff6b6b;">Task A 引用计数</h4>
+                        <div>
+                            <small>fanin (输入依赖)</small>
+                            <div class="refcount-bar">
+                                <div class="refcount-fill fanin" id="a-fanin" style="width: 100%;"></div>
+                            </div>
+                            <div class="refcount-text"><span id="a-fanin-val">0</span> / <span id="a-fanin-max">0</span></div>
+                        </div>
+                        <div>
+                            <small>fanout (输出引用)</small>
+                            <div class="refcount-bar">
+                                <div class="refcount-fill fanout" id="a-fanout" style="width: 0%;"></div>
+                            </div>
+                            <div class="refcount-text"><span id="a-fanout-val">0</span> / <span id="a-fanout-max">2</span></div>
+                        </div>
+                    </div>
+
+                    <div class="refcount-card">
+                        <h4 style="color: #4ecdc4;">Task B 引用计数</h4>
+                        <div>
+                            <small>fanin (输入依赖)</small>
+                            <div class="refcount-bar">
+                                <div class="refcount-fill fanin" id="b-fanin" style="width: 100%;"></div>
+                            </div>
+                            <div class="refcount-text"><span id="b-fanin-val">0</span> / <span id="b-fanin-max">0</span></div>
+                        </div>
+                        <div>
+                            <small>fanout (输出引用)</small>
+                            <div class="refcount-bar">
+                                <div class="refcount-fill fanout" id="b-fanout" style="width: 0%;"></div>
+                            </div>
+                            <div class="refcount-text"><span id="b-fanout-val">0</span> / <span id="b-fanout-max">2</span></div>
+                        </div>
+                    </div>
+
+                    <div class="refcount-card">
+                        <h4 style="color: #ffd93d;">Task C 引用计数</h4>
+                        <div>
+                            <small>fanin (输入依赖)</small>
+                            <div class="refcount-bar">
+                                <div class="refcount-fill fanin" id="c-fanin" style="width: 0%;"></div>
+                            </div>
+                            <div class="refcount-text"><span id="c-fanin-val">0</span> / <span id="c-fanin-max">2</span></div>
+                        </div>
+                        <div>
+                            <small>fanout (输出引用)</small>
+                            <div class="refcount-bar">
+                                <div class="refcount-fill fanout" id="c-fanout" style="width: 0%;"></div>
+                            </div>
+                            <div class="refcount-text"><span id="c-fanout-val">0</span> / <span id="c-fanout-max">1</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ready-queue">
+                    <span class="queue-label">就绪队列:</span>
+                    <div class="queue-items" id="ready-queue">
+                        <span style="color: #666;">(空)</span>
+                    </div>
+                </div>
+
+                <div class="timeline" id="timeline">
+                    <div style="color: #666; text-align: center;">点击 "开始演示" 查看执行流程</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 5: Code Examples -->
+        <div class="section">
+            <h2>5. 关键代码解析</h2>
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('tab-submit')">任务提交</button>
+                <button class="tab" onclick="showTab('tab-complete')">任务完成</button>
+                <button class="tab" onclick="showTab('tab-refcount')">依赖检测</button>
+            </div>
+
+            <div id="tab-submit" class="tab-content active">
+                <div class="code-block">
+<span class="comment">// pto_orchestrator.cpp: pto2_submit_task()</span>
+
+<span class="keyword">void</span> <span class="function">pto2_submit_task</span>(...) {
+    <span class="comment">// Step 1: 分配任务槽位</span>
+    <span class="keyword">int32_t</span> task_id = task_ring.<span class="function">pto2_task_ring_alloc</span>();
+
+    <span class="comment">// Step 2: 查找依赖 (通过 TensorMap)</span>
+    <span class="keyword">for</span> (<span class="keyword">auto</span>& param : params) {
+        <span class="keyword">if</span> (param.type == INPUT) {
+            <span class="comment">// 查找生产者</span>
+            tensor_map.<span class="function">lookup</span>(param.tensor, lookup_result);
+            <span class="comment">// 构建依赖链</span>
+            <span class="keyword">for</span> (<span class="keyword">auto</span>& entry : lookup_result) {
+                <span class="function">pto2_add_consumer_to_producer</span>(producer, task_id);
+            }
+        }
+    }
+
+    <span class="comment">// Step 3: 分配输出缓冲区</span>
+    buffer = heap_ring.<span class="function">pto2_heap_ring_alloc</span>(total_size);
+
+    <span class="comment">// Step 4: 初始化调度器状态</span>
+    scheduler.<span class="function">init_task</span>(task_id, task);
+}
+                </div>
+            </div>
+
+            <div id="tab-complete" class="tab-content">
+                <div class="code-block">
+<span class="comment">// pto_scheduler.cpp: on_task_complete()</span>
+
+<span class="keyword">void</span> <span class="function">on_task_complete</span>(task_id) {
+    <span class="comment">// Step 1: 标记完成</span>
+    task_state[slot] = COMPLETED;
+
+    <span class="comment">// Step 2: 通知消费者 (遍历 fanout)</span>
+    <span class="keyword">for</span> (consumer <span class="keyword">in</span> task.fanout_list) {
+        <span class="comment">// 增加消费者的 fanin_refcount</span>
+        fanin_refcount[consumer]++;
+
+        <span class="comment">// 检查是否所有依赖都满足了</span>
+        <span class="keyword">if</span> (fanin_refcount[consumer] == fanin_count[consumer]) {
+            <span class="comment">// 变为 READY，放入就绪队列</span>
+            task_state[consumer] = READY;
+            ready_queue.<span class="function">push</span>(consumer);
+        }
+    }
+
+    <span class="comment">// Step 3: 释放生产者 (遍历 fanin)</span>
+    <span class="keyword">for</span> (producer <span class="keyword">in</span> task.fanin_list) {
+        fanout_refcount[producer]++;
+        <span class="function">check_and_handle_consumed</span>(producer);
+    }
+}
+                </div>
+            </div>
+
+            <div id="tab-refcount" class="tab-content">
+                <div class="code-block">
+<span class="comment">// pto_scheduler.h: release_fanin_and_check_ready()</span>
+
+<span class="keyword">void</span> <span class="function">release_fanin_and_check_ready</span>(task_id, task) {
+    <span class="comment">// 原子操作: fanin_refcount + 1</span>
+    <span class="keyword">int32_t</span> new_refcount =
+        <span class="function">__atomic_fetch_add</span>(&fanin_refcount[slot], <span class="number">1</span>) + <span class="number">1</span>;
+
+    <span class="comment">// 检查是否所有生产者都完成了</span>
+    <span class="keyword">if</span> (new_refcount == task->fanin_count) {
+        <span class="comment">// CAS 操作: PENDING -> READY</span>
+        <span class="comment">// (防止多个线程同时将同一任务入队)</span>
+        <span class="keyword">if</span> (<span class="function">CAS</span>(&task_state[slot], PENDING, READY)) {
+            ready_queue.<span class="function">push</span>(task_id);
+        }
+    }
+}
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 6: Design Principles -->
+        <div class="section">
+            <h2>6. 设计精髓</h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                <div style="background: rgba(78, 205, 196, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #4ecdc4;">
+                    <h4 style="color: #4ecdc4; margin-bottom: 10px;">🔄 零拷贝</h4>
+                    <p style="font-size: 0.9em; color: #aaa;">Ring Buffer 避免内存复制，任务描述符在共享内存中，多处理器直接访问</p>
+                </div>
+                <div style="background: rgba(255, 107, 107, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #ff6b6b;">
+                    <h4 style="color: #ff6b6b; margin-bottom: 10px;">🔍 自动依赖发现</h4>
+                    <p style="font-size: 0.9em; color: #aaa;">TensorMap 通过内存地址自动发现依赖，用户只需指定输入输出</p>
+                </div>
+                <div style="background: rgba(255, 217, 61, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #ffd93d;">
+                    <h4 style="color: #ffd93d; margin-bottom: 10px;">⚡ 背压控制</h4>
+                    <p style="font-size: 0.9em; color: #aaa;">环形缓冲区满时自旋等待，防止内存溢出，实现自动流控</p>
+                </div>
+                <div style="background: rgba(162, 155, 254, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #a29bfe;">
+                    <h4 style="color: #a29bfe; margin-bottom: 10px;">🔓 无锁并发</h4>
+                    <p style="font-size: 0.9em; color: #aaa;">原子操作 (CAS, fetch_add) 保证线程安全，避免锁的开销</p>
+                </div>
+                <div style="background: rgba(107, 203, 119, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #6bcb77;">
+                    <h4 style="color: #6bcb77; margin-bottom: 10px;">♻️ 隐式回收</h4>
+                    <p style="font-size: 0.9em; color: #aaa;">不需要显式 free()，last_task_alive 推进时自动回收</p>
+                </div>
+                <div style="background: rgba(77, 150, 255, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #4d96ff;">
+                    <h4 style="color: #4d96ff; margin-bottom: 10px;">📦 作用域生命周期</h4>
+                    <p style="font-size: 0.9em; color: #aaa;">scope_begin/end 管理任务组生命周期，作用域结束时自动释放引用</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>PTO Runtime 控制流算法可视化教程</p>
+            <p style="margin-top: 10px;">关键文件: pto_scheduler.h/cpp | pto_orchestrator.h/cpp | pto_ring_buffer.h | pto_tensormap.h</p>
+        </div>
+    </div>
+
+    <script>
+        // State Machine Info
+        const stateInfo = {
+            pending: {
+                title: 'PENDING - 等待依赖',
+                desc: '任务刚被提交，正在等待所有输入依赖完成。fanin_refcount < fanin_count'
+            },
+            ready: {
+                title: 'READY - 准备执行',
+                desc: '所有依赖都已满足，任务已进入就绪队列等待调度。fanin_refcount == fanin_count'
+            },
+            running: {
+                title: 'RUNNING - 正在执行',
+                desc: '任务已被调度器取出，正在 AICore 上执行计算'
+            },
+            completed: {
+                title: 'COMPLETED - 执行完成',
+                desc: '任务执行完毕，输出数据可用，但缓冲区还不能释放（消费者可能还在使用）'
+            },
+            consumed: {
+                title: 'CONSUMED - 完全消耗',
+                desc: '所有消费者都已完成，缓冲区可以回收。fanout_refcount == fanout_count'
+            }
+        };
+
+        function showStateInfo(state) {
+            const info = stateInfo[state];
+            document.getElementById('state-info').innerHTML = `
+                <h4 style="margin-bottom: 10px;">${info.title}</h4>
+                <p style="color: #aaa;">${info.desc}</p>
+            `;
+
+            // Highlight active state
+            document.querySelectorAll('.state').forEach(s => s.classList.remove('active'));
+            document.querySelector(`.state.${state}`).classList.add('active');
+        }
+
+        // Tab switching
+        function showTab(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+        }
+
+        // Ring Buffer Visualization
+        function initTaskRing() {
+            const container = document.getElementById('task-ring');
+            container.innerHTML = '';
+            for (let i = 0; i < 8; i++) {
+                const slot = document.createElement('div');
+                slot.className = 'slot empty';
+                slot.id = `slot-${i}`;
+                slot.innerHTML = `${i}<span class="slot-label">slot ${i}</span>`;
+                container.appendChild(slot);
+            }
+        }
+
+        // Demo State
+        let demoStep = 0;
+        let autoRunning = false;
+        let autoInterval = null;
+
+        const demoSteps = [
+            { action: 'submit', task: 'A', desc: '提交 Task A (无依赖)', state: 'READY', fanin: 0, fanout: 0 },
+            { action: 'submit', task: 'B', desc: '提交 Task B (无依赖)', state: 'READY', fanin: 0, fanout: 0 },
+            { action: 'submit', task: 'C', desc: '提交 Task C (依赖 A, B)', state: 'PENDING', fanin: 0, fanout: 0 },
+            { action: 'dispatch', task: 'A', desc: '调度器取出 Task A', state: 'RUNNING' },
+            { action: 'complete', task: 'A', desc: 'AICore 完成 Task A', state: 'COMPLETED', updateC: true },
+            { action: 'dispatch', task: 'B', desc: '调度器取出 Task B', state: 'RUNNING' },
+            { action: 'complete', task: 'B', desc: 'AICore 完成 Task B', state: 'COMPLETED', updateC: true, cReady: true },
+            { action: 'dispatch', task: 'C', desc: '调度器取出 Task C', state: 'RUNNING' },
+            { action: 'complete', task: 'C', desc: 'AICore 完成 Task C', state: 'COMPLETED' },
+            { action: 'consume', task: 'A', desc: 'Task A 所有消费者完成 → CONSUMED', state: 'CONSUMED' },
+            { action: 'consume', task: 'B', desc: 'Task B 所有消费者完成 → CONSUMED', state: 'CONSUMED' },
+            { action: 'consume', task: 'C', desc: 'Task C 作用域结束 → CONSUMED', state: 'CONSUMED' },
+        ];
+
+        const taskStates = { A: 'pending', B: 'pending', C: 'pending' };
+        const faninCount = { A: 0, B: 0, C: 2 };
+        const fanoutCount = { A: 2, B: 2, C: 1 };
+        const faninVal = { A: 0, B: 0, C: 0 };
+        const fanoutVal = { A: 0, B: 0, C: 0 };
+        const readyQueue = [];
+
+        function updateUI() {
+            // Update task nodes
+            ['A', 'B', 'C'].forEach(t => {
+                const node = document.getElementById(`task-${t.toLowerCase()}`);
+                const stateEl = document.getElementById(`task-${t.toLowerCase()}-state`);
+                node.className = `task-node task-${t.toLowerCase()} ${taskStates[t]}`;
+                stateEl.textContent = taskStates[t].toUpperCase();
+            });
+
+            // Update refcounts
+            ['a', 'b', 'c'].forEach(t => {
+                const T = t.toUpperCase();
+                const faninPercent = faninCount[T] === 0 ? 100 : (faninVal[T] / faninCount[T]) * 100;
+                const fanoutPercent = (fanoutVal[T] / fanoutCount[T]) * 100;
+
+                document.getElementById(`${t}-fanin`).style.width = `${faninPercent}%`;
+                document.getElementById(`${t}-fanin-val`).textContent = faninVal[T];
+                document.getElementById(`${t}-fanin-max`).textContent = faninCount[T];
+
+                document.getElementById(`${t}-fanout`).style.width = `${fanoutPercent}%`;
+                document.getElementById(`${t}-fanout-val`).textContent = fanoutVal[T];
+            });
+
+            // Update ready queue
+            const queueEl = document.getElementById('ready-queue');
+            if (readyQueue.length === 0) {
+                queueEl.innerHTML = '<span style="color: #666;">(空)</span>';
+            } else {
+                queueEl.innerHTML = readyQueue.map(t =>
+                    `<div class="queue-item" style="background: linear-gradient(135deg, #00b894, #00a085);">${t}</div>`
+                ).join('');
+            }
+
+            // Update ring buffer
+            let currentIndex = 3;
+            let lastAlive = 0;
+
+            if (demoStep >= 10) {
+                lastAlive = 1;
+            }
+            if (demoStep >= 11) {
+                lastAlive = 2;
+            }
+            if (demoStep >= 12) {
+                lastAlive = 3;
+            }
+
+            document.getElementById('current-index').textContent = currentIndex;
+            document.getElementById('last-alive').textContent = lastAlive;
+
+            for (let i = 0; i < 3; i++) {
+                const slot = document.getElementById(`slot-${i}`);
+                slot.classList.remove('empty', 'allocated', 'consumed', 'current');
+                if (i < lastAlive) {
+                    slot.classList.add('consumed');
+                } else if (i < currentIndex) {
+                    slot.classList.add('allocated');
+                } else {
+                    slot.classList.add('empty');
+                }
+            }
+
+            // Update heap
+            const heapUsed = Math.min(demoStep * 8, 60);
+            document.getElementById('heap-used').style.width = `${heapUsed}%`;
+            document.getElementById('heap-tail').style.left = `${Math.max(0, (demoStep - 10) * 8)}%`;
+        }
+
+        function addTimelineEntry(time, event) {
+            const timeline = document.getElementById('timeline');
+            if (timeline.querySelector('div[style*="color: #666"]')) {
+                timeline.innerHTML = '';
+            }
+            const entry = document.createElement('div');
+            entry.className = 'timeline-entry';
+            entry.innerHTML = `<span class="timeline-time">T${time}</span><span class="timeline-event">${event}</span>`;
+            timeline.appendChild(entry);
+            timeline.scrollTop = timeline.scrollHeight;
+        }
+
+        function stepDemo() {
+            if (demoStep >= demoSteps.length) {
+                if (autoRunning) toggleAutoRun();
+                return;
+            }
+
+            const step = demoSteps[demoStep];
+
+            switch (step.action) {
+                case 'submit':
+                    taskStates[step.task] = step.state.toLowerCase();
+                    if (step.state === 'READY') {
+                        readyQueue.push(step.task);
+                    }
+                    // Set initial fanout = 1 (scope reference)
+                    fanoutVal[step.task] = 1;
+                    break;
+
+                case 'dispatch':
+                    taskStates[step.task] = 'running';
+                    const idx = readyQueue.indexOf(step.task);
+                    if (idx > -1) readyQueue.splice(idx, 1);
+                    break;
+
+                case 'complete':
+                    taskStates[step.task] = 'completed';
+                    if (step.updateC) {
+                        faninVal.C++;
+                        if (step.cReady) {
+                            taskStates.C = 'ready';
+                            readyQueue.push('C');
+                        }
+                    }
+                    break;
+
+                case 'consume':
+                    taskStates[step.task] = 'consumed';
+                    fanoutVal[step.task] = fanoutCount[step.task];
+                    break;
+            }
+
+            addTimelineEntry(demoStep, step.desc);
+            updateUI();
+            demoStep++;
+
+            document.getElementById('step-btn').disabled = demoStep >= demoSteps.length;
+        }
+
+        function startDemo() {
+            resetDemo();
+            stepDemo();
+        }
+
+        function resetDemo() {
+            demoStep = 0;
+            autoRunning = false;
+            if (autoInterval) {
+                clearInterval(autoInterval);
+                autoInterval = null;
+            }
+            document.getElementById('auto-btn').textContent = '🔄 自动运行';
+
+            ['A', 'B', 'C'].forEach(t => taskStates[t] = 'pending');
+            ['A', 'B', 'C'].forEach(t => faninVal[t] = 0);
+            ['A', 'B', 'C'].forEach(t => fanoutVal[t] = 0);
+            readyQueue.length = 0;
+
+            document.getElementById('timeline').innerHTML = '<div style="color: #666; text-align: center;">点击 "开始演示" 查看执行流程</div>';
+            document.getElementById('step-btn').disabled = false;
+
+            updateUI();
+            initTaskRing();
+        }
+
+        function toggleAutoRun() {
+            autoRunning = !autoRunning;
+            const btn = document.getElementById('auto-btn');
+
+            if (autoRunning) {
+                btn.textContent = '⏸ 暂停';
+                autoInterval = setInterval(() => {
+                    if (demoStep >= demoSteps.length) {
+                        toggleAutoRun();
+                        return;
+                    }
+                    stepDemo();
+                }, 1000);
+            } else {
+                btn.textContent = '🔄 自动运行';
+                if (autoInterval) {
+                    clearInterval(autoInterval);
+                    autoInterval = null;
+                }
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initTaskRing();
+            updateUI();
+        });
+    </script>
+</body>
+</html>
