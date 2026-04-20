@@ -315,6 +315,7 @@
             <div class="nav-tab active" onclick="navigateTo('overview')">概览</div>
             <div class="nav-tab" onclick="navigateTo('pipeline')">流水线</div>
             <div class="nav-tab" onclick="navigateTo('memory')">存储通路</div>
+            <div class="nav-tab" onclick="navigateTo('vec4k')">VEC-4K</div>
             <div class="nav-tab" onclick="navigateTo('outercube')">outerCube</div>
             <div class="nav-tab" onclick="navigateTo('evaluation')">架构评价</div>
         </nav>
@@ -975,53 +976,6 @@ flowchart TB
             </p>
         </div>
 
-        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">VEC-4K 向量数据通路</h4>
-        <div class="mermaid-container">
-        <pre class="mermaid">
-flowchart TB
-    subgraph VEC["VEC-4K 向量执行单元"]
-        direction TB
-        subgraph Input["输入 (1 Read Epoch = 8 cycles)"]
-            SRC_A["源操作数 A<br/>1 tile (4KB)<br/>via R-port"]
-            SRC_B["源操作数 B<br/>1 tile (4KB)<br/>via R-port"]
-            SRC_C["源操作数 C<br/>1 tile (4KB)<br/>via R-port (FMA only)"]
-        end
-
-        subgraph Compute["128 独立计算组<br/>Strip-based 处理"]
-            CG["Compute Group ×128<br/>每 group 处理 8 strips × 512B"]
-            OP["操作: VADD / VMUL / VFMA<br/>VROWSUM / VCOLSUM / VEXPAND"]
-            FIB["Fiber ID<br/>用于 reduce 和 expand 操作"]
-        end
-
-        subgraph Output["输出 (1 Write Epoch = 8 cycles)"]
-            DST["目标 Tile<br/>1 tile (4KB)<br/>via W-port"]
-        end
-    end
-
-    TRF3["TRegFile-4K"]
-
-    TRF3 -->|"Read port"| SRC_A
-    TRF3 -->|"Read port"| SRC_B
-    TRF3 -. "Read port (FMA)" .-> SRC_C
-    SRC_A --> CG
-    SRC_B --> CG
-    SRC_C -.-> CG
-    CG --> OP
-    OP --> DST
-    DST -->|"Write port"| TRF3
-    FIB -.-> OP
-        </pre>
-        </div>
-        <div class="diagram-explanation">
-            <h4>VEC-4K 向量数据通路详解</h4>
-            <p>VEC-4K 是 Davinci 的向量执行单元，处理 512b 宽度的元素级操作。它采用 strip-based 处理模型，将一个 4KB Tile 分为 8 个 strip（每个 512B）进行逐 strip 计算。</p>
-            <ul>
-                <li><strong>128 独立计算组</strong>：每个 Tile 的 8 strips × 64 elements / strip 被分配到 128 个独立计算组。这允许细粒度的数据并行和 fault tolerance。</li>
-                <li><strong>操作类型</strong>：VADD/VMUL（2 源，1 epoch 读 + 1 epoch 写 = 16 cycles）、VFMA（3 源，同样 16 cycles）、VROWSUM/VCOLSUM（跨 strip reduce，16 cycles 但非流水线）、VEXPAND（基于 Fiber ID 的广播扩展）。</li>
-                <li><strong>Fiber ID</strong>：每个计算组携带一个 Fiber ID，用于 reduce（跨 group 汇总）和 expand（从一个元素广播到整个 strip）操作。这是 VEC-4K 支持灵活数据布局的关键机制。</li>
-                <li><strong>延迟</strong>：2 epochs（8R + 8W）= 16 cycles 端到端。双源操作和三源 FMA 的延迟相同，因为瓶颈在 TRegFile 端口带宽而非计算。</li>
-            </ul>
-        </div>
         <h3 class="section-title">Cache 层次</h3>
         <div class="mermaid-container">
         <pre class="mermaid">
@@ -1178,6 +1132,283 @@ flowchart LR
                 <li><strong>TILE.LD/ST</strong>：彼此之间默认无序。需要排序时使用 FENCE 指令</li>
                 <li><strong>CUBE.OPA</strong>：通过 Tile RAT ready bits 与前面的 TILE.LD 保持排序</li>
             </ul>
+        </div>
+    </div>
+
+    <div class="page" id="page-vec4k">
+        <h3 class="section-title">VEC-4K 向量执行单元</h3>
+        <p class="section-desc">VEC-4K 是 Davinci 的向量执行单元，实现 PTO Tile Lib ISA 的子集：元素级 tile-tile 操作、tile-scalar 操作、轴归约/扩展及复杂指令（TMRGSORT、TSORT32、TGATHER、TCI）。该单元与 TRegFile-4K 配对，处理 4KB tile 上的 512b 宽度元素级操作。</p>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">Tile 格式模型</h4>
+        <div class="card">
+            <h4>存储不变量</h4>
+            <p>每个逻辑 tile 在 TRegFile 中占据<strong>恰好 4096 bytes</strong>。逻辑形状为 <strong>R × C</strong>（均为 2 的幂），采用 row-major 布局。</p>
+            <table>
+                <tr><th>逻辑格式</th><th>存储 E (字节/元素)</th><th>元素数 / 4KB tile (N = 4096/E)</th></tr>
+                <tr><td>FP32</td><td>4</td><td>1024</td></tr>
+                <tr><td>FP16 / BF16</td><td>2</td><td>2048</td></tr>
+                <tr><td>FP8 (E4M3/E5M2)</td><td>1</td><td>4096</td></tr>
+                <tr><td>MXFP4 / HiFP4</td><td>1/2 (packed nibble)</td><td>8192</td></tr>
+            </table>
+            <h4 style="margin-top:1rem">合法 Shape 示例</h4>
+            <div class="grid-4" style="margin-top:0.5rem">
+                <div class="stat-card"><div class="stat-value" style="font-size:1rem">FP32</div><div class="stat-label">32×32, 16×64<br/>R×C = 1024</div></div>
+                <div class="stat-card"><div class="stat-value" style="font-size:1rem">FP16</div><div class="stat-label">64×32, 32×64<br/>R×C = 2048</div></div>
+                <div class="stat-card"><div class="stat-value" style="font-size:1rem">FP8</div><div class="stat-label">64×64, 128×32<br/>R×C = 4096</div></div>
+                <div class="stat-card"><div class="stat-value" style="font-size:1rem">FP4</div><div class="stat-label">128×64, 256×32<br/>R×C = 8192</div></div>
+            </div>
+            <p style="margin-top:0.8rem;color:var(--text-muted);font-size:0.82rem">每条向量指令携带 <strong>format, R, C, opcode</strong> 元数据。硬件从中推导 strip_count = 8（固定）和 elem_per_strip = 512/E。</p>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">TRegFile 接口与 Striping</h4>
+        <div class="card">
+            <h4>端口绑定</h4>
+            <table>
+                <tr><th>方向</th><th>宽度</th><th>数量</th><th>聚合带宽</th></tr>
+                <tr><td>Read</td><td>512 B</td><td>2</td><td>1024 B/cycle</td></tr>
+                <tr><td>Write</td><td>512 B</td><td>2</td><td>1024 B/cycle</td></tr>
+            </table>
+            <table style="margin-top:0.8rem">
+                <tr><th>逻辑名称</th><th>TRegFile 端口</th><th>Phase p</th><th>Strip 交付</th></tr>
+                <tr><td>Port A</td><td>R0</td><td>0</td><td>G_A = e</td></tr>
+                <tr><td>Port B</td><td>R4</td><td>4</td><td>G_B = (4 + e) mod 8</td></tr>
+            </table>
+            <h4 style="margin-top:1rem">双端口加速</h4>
+            <p>双端口读同一 tile 时，cycle 0..3 中 (G_A, G_B) 遍历 (0,4),(1,5),(2,6),(3,7)——8 个 strip 在<strong>4 cycles</strong>内全部出现一次。Cycle 4..7 为重复交付（可抑制）。相比单端口 8 cycles，吞吐量翻倍。</p>
+            <h4 style="margin-top:1rem">读取延迟</h4>
+            <div class="grid-2">
+                <div class="stat-card"><div class="stat-value">4 cycles</div><div class="stat-label">一元操作<br/>双端口同 tile<br/>8 strips × 2×512B</div></div>
+                <div class="stat-card"><div class="stat-value">8 cycles</div><div class="stat-label">二元元素操作<br/>每操作数 8 strips<br/>= 1 full epoch</div></div>
+            </div>
+            <h4 style="margin-top:1rem">On-Chip Buffers</h4>
+            <ul>
+                <li><strong>A/B Strip Buffer</strong>：各 512B，对应 Rd0/Rd1，可选双缓冲以重叠 TRegFile 读取与计算</li>
+                <li><strong>Acc 累加器</strong>：256 × 32b × 2 ping-pong = 2048B；N_run = 512 逻辑槽位；bank = p mod 8, word = p >> 3</li>
+                <li><strong>Scalar Broadcast Register</strong>：tile-scalar 立即数或单元素 tile</li>
+            </ul>
+            <p style="margin-top:0.5rem;color:var(--accent-orange);font-size:0.85rem"><strong>重要约束</strong>：TRegFile 读端口仅交付完整 512B bank-group strip，<strong>无 gather</strong>（不支持子 strip 元素索引）。TCOL* 操作需在同一 reg_idx 上重放多个 TRegFile epoch。</p>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">向量数据通路详解</h4>
+        <div class="mermaid-container">
+        <pre class="mermaid">
+flowchart TB
+    subgraph VEC["VEC-4K 向量执行单元"]
+        direction TB
+        subgraph Input["TRegFile 读端口"]
+            RD0["Rd0 (R0, phase 0)<br/>512 B/cycle"]
+            RD1["Rd1 (R4, phase 4)<br/>512 B/cycle"]
+        end
+
+        XB["Crossbar<br/>1024 B/cycle<br/>2×512B 聚合"]
+        CTRL["CONTROL<br/>opcode + shape<br/>format, R, C"]
+
+        subgraph StageA["(A) Align / Unpack / Permute"]
+            UNP["IN: 1024B/cycle<br/>OUT: 128 slices<br/>slice i = W_prep,i bits"]
+        end
+
+        subgraph StageB["(B) 128 独立计算组<br/>N_group = 128"]
+            CG["Compute Group i<br/>Elementwise ALU<br/>→ Reduction Tree"]
+            ACC["ACCUMULATOR<br/>256×32b × 2 ping-pong<br/>RMW: adder + DFF<br/>BYPASS: 直写 DFF"]
+        end
+
+        subgraph StageC["(C) Pack"]
+            PK["Pack: wide → FP8/FP4<br/>narrow dst format"]
+        end
+
+        subgraph Output["写端口"]
+            WR0["Wr0 (512 B)"]
+            WR1["Wr1 (512 B)"]
+        end
+    end
+
+    CTRL --> XB
+    CTRL --> UNP
+    CTRL --> CG
+    RD0 --> XB
+    RD1 --> XB
+    XB --> UNP
+    UNP --> CG
+    CG -->|"W_tree,i = 32b FP32"| ACC
+    CG -->|"elementwise bypass<br/>tree depth 0"| PK
+    ACC --> PK
+    PK --> WR0
+    PK --> WR1
+        </pre>
+        </div>
+        <div class="diagram-explanation">
+            <h4>数据通路各级说明</h4>
+            <ul>
+                <li><strong>Crossbar</strong>：2×512B 聚合为 1024B/cycle，由 Control 驱动路由分配</li>
+                <li><strong>(A) Align / Unpack / Permute</strong>：将 1024B 分发到 128 个并行 slice，每个 slice 宽度 W_prep,i 由格式和操作决定。子字节类型（FP4）在此阶段 unpack 为 FP32 内部操作数</li>
+                <li><strong>(B) 128 Compute Groups</strong>：每个 slice 独立经过 Elementwise ALU（宽度 W_ALU,i）→ Reduction Tree（输出 W_tree,i，典型 32b FP32）。允许 W_ALU,i ≥ W_tree,i（宽 SIMD ALU + 窄 tree）。纯元素操作可 bypass tree（tree depth 0）</li>
+                <li><strong>Accumulator</strong>：支持两种模式——<strong>RMW</strong>（adder + DFF 反馈，用于 reduce 部分和累加）和 <strong>BYPASS</strong>（直写 DFF，用于非累加 retire）。Ping-pong 双缓冲避免读写冲突</li>
+                <li><strong>(C) Pack</strong>：将宽内部结果打包为 FP8/FP4 等窄目标格式，通过 Wr0/Wr1 交付（聚合 1024B/cycle）</li>
+            </ul>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">Fiber ID 与 Strip Calendar</h4>
+        <div class="card">
+            <h4>Fiber ID 定义</h4>
+            <p><strong>fiber_id</strong> 是 reduce 和 expand 类操作所处理的逻辑轴索引——reduce 后每个 fiber 产生一个输出槽位，expand 时每个 fiber 提供一个标量源。</p>
+            <table>
+                <tr><th>操作码族</th><th>fiber_id</th><th>范围</th></tr>
+                <tr><td>TROW* (行归约)</td><td>行索引 r</td><td>0 … R−1</td></tr>
+                <tr><td>TCOL* (列归约)</td><td>列索引 c</td><td>0 … C−1</td></tr>
+                <tr><td>TROWEXPAND* (行扩展)</td><td>r (splat 目标行)</td><td>0 … R−1</td></tr>
+                <tr><td>TCOLEXPAND* (列扩展)</td><td>c (splat 目标列)</td><td>0 … C−1</td></tr>
+            </table>
+            <p style="margin-top:0.8rem">元素级 tile-tile 操作<strong>不使用</strong>单一全局 fiber_id，仅按 strip 逐个调度。</p>
+            <h4 style="margin-top:1rem">Strip Read Calendar</h4>
+            <p>Calendar 是逐 cycle 的调度表，绑定 Rd0/Rd1 上的数据到数据通路行为——哪些操作数送入哪些 lane、哪些 fiber_id 在该 cycle 触及 Acc。</p>
+            <ul>
+                <li><strong>Port Row (per cycle t)</strong>：指定 s(t)（哪个 512B chunk）、每个端口读哪个逻辑 tile、以及可选的第二遍 phase</li>
+                <li><strong>模板选择</strong>：opcode 译码根据 (format, R, C, opcode) 从 <strong>47 种 calendar recipe</strong> 中选取模板</li>
+                <li><strong>行轴模板</strong>：仅行操作就有 76 种变体</li>
+            </ul>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">计算示例（逐 Cycle 调度）</h4>
+        <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:1rem">以下展示不同格式和 shape 下 TROWSUM 的 strip-level 调度过程。双端口同 tile 模式下，cycle 0..3 即可覆盖全部 8 strips。</p>
+
+        <div style="margin-bottom:1.2rem">
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.8rem" id="vec-example-tabs">
+                <button class="tag tag-cyan" style="cursor:pointer;padding:6px 14px;border:1px solid var(--accent-cyan);background:rgba(0,212,255,0.15)" onclick="showVecExample('exA')" id="btn-exA">A: TROWSUM FP32 8×128</button>
+                <button class="tag" style="cursor:pointer;padding:6px 14px;border:1px solid var(--border-color);background:var(--bg-card)" onclick="showVecExample('exB')" id="btn-exB">B: TROWSUM FP32 32×32</button>
+                <button class="tag" style="cursor:pointer;padding:6px 14px;border:1px solid var(--border-color);background:var(--bg-card)" onclick="showVecExample('exC')" id="btn-exC">C: TROWEXPANDADD FP32 8×128</button>
+                <button class="tag" style="cursor:pointer;padding:6px 14px;border:1px solid var(--border-color);background:var(--bg-card)" onclick="showVecExample('exD')" id="btn-exD">D: TROWSUM HiFP4 256×32</button>
+                <button class="tag" style="cursor:pointer;padding:6px 14px;border:1px solid var(--border-color);background:var(--bg-card)" onclick="showVecExample('exG')" id="btn-exG">G: TROWSUM MXFP4 512×16</button>
+            </div>
+
+            <div id="exA" class="card" style="display:block">
+                <h4>Example A — TROWSUM, FP32, 8×128</h4>
+                <p style="font-size:0.85rem;color:var(--text-muted)">几何：row_B = 512B，strip Gs 恰好包含一行 r = Gs。双端口每 cycle 处理 2 行，4 cycles 完成。</p>
+                <div style="overflow-x:auto">
+                <table>
+                    <tr><th>t</th><th>e</th><th>Port A</th><th>Port B</th><th>Fibers (A)</th><th>Fibers (B)</th><th>#elem</th><th>Reduce</th></tr>
+                    <tr><td>0</td><td>0</td><td>src@G0</td><td>src@G4</td><td>r=0</td><td>r=4</td><td>128</td><td>2× lane-tree → Acc r=0, r=4</td></tr>
+                    <tr><td>1</td><td>1</td><td>src@G1</td><td>src@G5</td><td>r=1</td><td>r=5</td><td>128</td><td>Acc r=1, r=5</td></tr>
+                    <tr><td>2</td><td>2</td><td>src@G2</td><td>src@G6</td><td>r=2</td><td>r=6</td><td>128</td><td>Acc r=2, r=6</td></tr>
+                    <tr><td>3</td><td>3</td><td>src@G3</td><td>src@G7</td><td>r=3</td><td>r=7</td><td>128</td><td>Acc r=3, r=7</td></tr>
+                </table>
+                </div>
+                <p style="font-size:0.82rem;color:var(--accent-green);margin-top:0.5rem">t=3 完成：8 fibers × 128 elements。单端口需 8 cycles，双端口仅需 4 cycles。</p>
+            </div>
+
+            <div id="exB" class="card" style="display:none">
+                <h4>Example B — TROWSUM, FP32, 32×32</h4>
+                <p style="font-size:0.85rem;color:var(--text-muted)">几何：row_B = 128B，每 strip 含 4 行 (512/128=4)。单 Port A 即可覆盖（Port B idle）。</p>
+                <div style="overflow-x:auto">
+                <table>
+                    <tr><th>t</th><th>e</th><th>Port A</th><th>Port B</th><th>Fibers (A)</th><th>#elem</th><th>Reduce</th></tr>
+                    <tr><td>0</td><td>0</td><td>src@G0</td><td>—</td><td>r=0,1,2,3</td><td>32</td><td>4× lane-tree (K=32) → Acc</td></tr>
+                    <tr><td>1</td><td>1</td><td>src@G1</td><td>—</td><td>r=4,5,6,7</td><td>32</td><td>Acc</td></tr>
+                    <tr><td>2</td><td>2</td><td>src@G2</td><td>—</td><td>r=8..11</td><td>32</td><td>Acc</td></tr>
+                    <tr><td>3</td><td>3</td><td>src@G3</td><td>—</td><td>r=12..15</td><td>32</td><td>Acc</td></tr>
+                    <tr><td>4</td><td>4</td><td>src@G4</td><td>—</td><td>r=16..19</td><td>32</td><td>Acc</td></tr>
+                    <tr><td>5</td><td>5</td><td>src@G5</td><td>—</td><td>r=20..23</td><td>32</td><td>Acc</td></tr>
+                    <tr><td>6</td><td>6</td><td>src@G6</td><td>—</td><td>r=24..27</td><td>32</td><td>Acc</td></tr>
+                    <tr><td>7</td><td>7</td><td>src@G7</td><td>—</td><td>r=28..31</td><td>32</td><td>Acc</td></tr>
+                </table>
+                </div>
+                <p style="font-size:0.82rem;color:var(--accent-green);margin-top:0.5rem">32 fibers × 32 elements，8 cycles = 1 epoch。每 strip 4 行 × within-strip tree → Acc。</p>
+            </div>
+
+            <div id="exC" class="card" style="display:none">
+                <h4>Example C — TROWEXPANDADD, FP32, 8×128 (v[r] + src)</h4>
+                <p style="font-size:0.85rem;color:var(--text-muted)">v tile：8 行标量 FP32 = 32B，位于 strip G0。预取 v 后，双端口全部用于 src，4 cycles 完成。</p>
+                <div style="overflow-x:auto">
+                <table>
+                    <tr><th>t</th><th>e</th><th>Port A</th><th>Port B</th><th>Fibers (src)</th><th>#elem</th><th>v[fiber_id]</th><th>Expand</th></tr>
+                    <tr style="background:rgba(245,158,11,0.08)"><td>pre</td><td>—</td><td>—</td><td>v@G0</td><td>—</td><td>—</td><td>latch v[0]..v[7]</td><td>预取 v</td></tr>
+                    <tr><td>0</td><td>0</td><td>src@G0</td><td>src@G4</td><td>r=0, r=4</td><td>128</td><td>v[0], v[4]</td><td>128 lanes/fiber: src + v</td></tr>
+                    <tr><td>1</td><td>1</td><td>src@G1</td><td>src@G5</td><td>r=1, r=5</td><td>128</td><td>v[1], v[5]</td><td>...</td></tr>
+                    <tr><td>2</td><td>2</td><td>src@G2</td><td>src@G6</td><td>r=2, r=6</td><td>128</td><td>v[2], v[6]</td><td>...</td></tr>
+                    <tr><td>3</td><td>3</td><td>src@G3</td><td>src@G7</td><td>r=3, r=7</td><td>128</td><td>v[3], v[7]</td><td>...</td></tr>
+                </table>
+                </div>
+                <p style="font-size:0.82rem;color:var(--accent-orange);margin-top:0.5rem">t_pre：Port B 读取 v@G0 一次，锁存 v[0]..v[7]。若 v 与 src 同 cycle 读取，会失去 src@G4 的双端口加速。</p>
+            </div>
+
+            <div id="exD" class="card" style="display:none">
+                <h4>Example D — TROWSUM, HiFP4, 256×32</h4>
+                <p style="font-size:0.85rem;color:var(--text-muted)">几何：E=1/2 (packed nibble)，row_B = 16B = 32 元素/行。每 strip 含 32 fiber_id（512/16=32）。双端口 4 cycles 覆盖 256 行。</p>
+                <div style="overflow-x:auto">
+                <table>
+                    <tr><th>t</th><th>e</th><th>Port A</th><th>Port B</th><th>Fiber IDs (A)</th><th>Fiber IDs (B)</th><th>#elem</th><th>Reduce</th></tr>
+                    <tr><td>0</td><td>0</td><td>src@G0</td><td>src@G4</td><td>r=0..31</td><td>r=128..159</td><td>32</td><td>64 lane-trees → 64 Acc RMW</td></tr>
+                    <tr><td>1</td><td>1</td><td>src@G1</td><td>src@G5</td><td>r=32..63</td><td>r=160..191</td><td>32</td><td>64 Acc</td></tr>
+                    <tr><td>2</td><td>2</td><td>src@G2</td><td>src@G6</td><td>r=64..95</td><td>r=192..223</td><td>32</td><td>64 Acc</td></tr>
+                    <tr><td>3</td><td>3</td><td>src@G3</td><td>src@G7</td><td>r=96..127</td><td>r=224..255</td><td>32</td><td>64 Acc</td></tr>
+                </table>
+                </div>
+                <p style="font-size:0.82rem;color:var(--accent-green);margin-top:0.5rem">t=3 完成：256 fibers × 32 elements/fiber。每 cycle 64 partial trees（32 fibers × 2 ports）。Unpack 阶段将 nibble 映射为宽操作数。</p>
+            </div>
+
+            <div id="exG" class="card" style="display:none">
+                <h4>Example G — TROWSUM, MXFP4, 512×16</h4>
+                <p style="font-size:0.85rem;color:var(--text-muted)">几何：E=1/2 (packed nibble)，row_B = 8B = 16 元素/行。每 strip 含 64 fiber_id（512/8=64）。双端口 4 cycles 覆盖 512 行。</p>
+                <div style="overflow-x:auto">
+                <table>
+                    <tr><th>t</th><th>e</th><th>Port A</th><th>Port B</th><th>Fiber IDs (A)</th><th>Fiber IDs (B)</th><th>#elem</th><th>Reduce</th></tr>
+                    <tr><td>0</td><td>0</td><td>src@G0</td><td>src@G4</td><td>r=0..63</td><td>r=256..319</td><td>16</td><td>128 lane-trees → 128 Acc RMW</td></tr>
+                    <tr><td>1</td><td>1</td><td>src@G1</td><td>src@G5</td><td>r=64..127</td><td>r=320..383</td><td>16</td><td>128 Acc</td></tr>
+                    <tr><td>2</td><td>2</td><td>src@G2</td><td>src@G6</td><td>r=128..191</td><td>r=384..447</td><td>16</td><td>128 Acc</td></tr>
+                    <tr><td>3</td><td>3</td><td>src@G3</td><td>src@G7</td><td>r=192..255</td><td>r=448..511</td><td>16</td><td>128 Acc</td></tr>
+                </table>
+                </div>
+                <p style="font-size:0.82rem;color:var(--accent-green);margin-top:0.5rem">最高密度场景：512 fibers × 16 elements/fiber。每 cycle 128 partial trees，MXFP4 格式下 Acc bank 冲突需注意 (bank = r mod 8)。</p>
+            </div>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">性能指标与 Wave 公式</h4>
+        <div class="card">
+            <h4>列归约 Wave 公式（TCOLSUM / TCOLEXPAND）</h4>
+            <p>列操作需跨 strip 合并同一列 c 的部分和，Acc 容量限制每次扫描只能完成部分列，需多 wave 迭代。</p>
+            <div style="background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.2);border-radius:8px;padding:1rem;margin:0.8rem 0;text-align:center">
+                <div style="font-size:1.1rem;font-weight:700;color:var(--accent-cyan)">#W = max( ⌈C / N_acc⌉ , ⌈C / (N_tree × f)⌉ , ⌈C / N_run⌉ )</div>
+            </div>
+            <table>
+                <tr><th>参数</th><th>含义</th><th>典型值</th></tr>
+                <tr><td>N_acc</td><td>每 cycle 并行 Acc RMW 槽位数</td><td>64</td></tr>
+                <tr><td>N_tree</td><td>并行 adder/reduce tree 数</td><td>8</td></tr>
+                <tr><td>f</td><td>每 tree 每次全 tile 扫描的 Acc 提交数</td><td>8</td></tr>
+                <tr><td>N_run</td><td>Acc DFF 逻辑槽位数</td><td>512</td></tr>
+                <tr><td>P_beat</td><td>每 cycle 同步 retire 上限</td><td>min(N_tree, N_acc)</td></tr>
+            </table>
+            <h4 style="margin-top:1rem">计算示例：TCOLSUM, MXFP4, 32×256</h4>
+            <p>C = 256, N_acc = 64, N_run = 512, N_tree = 8, f = 8</p>
+            <ul>
+                <li>#waves_acc = ⌈256/64⌉ = <strong>4</strong></li>
+                <li>#waves_tree = ⌈256/(8×8)⌉ = ⌈256/64⌉ = <strong>4</strong></li>
+                <li>#waves_Nrun = ⌈256/512⌉ = <strong>1</strong></li>
+                <li><strong>#W = max(4, 4, 1) = 4 waves</strong>（需 4 次 tile-epoch 扫描）</li>
+            </ul>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">TRegFile Write-to-Read Bypass 与 RAW Hazard</h4>
+        <div class="card">
+            <h4>同相位 Bypass（硬件解决，零延迟）</h4>
+            <p>Calendar 保证每个 group 的 reader 和 writer 在任意 cycle 都是同相位端口对。当 R0/W0 读写同一 tile_idx 时，SRAM 写延迟 (1 cycle) 会返回过期数据。硬件提供<strong>组合逻辑 bypass mux</strong>，将写数据直接转发到读输出。</p>
+            <h4 style="margin-top:1rem">跨相位 RAW Hazard（需调度器规避）</h4>
+            <p>不同相位端口对（如 R0 phase 0 读 tile T，W1 phase 1 写 tile T）在同一 epoch 内操作同一 tile 时，相位偏移导致某些 group 被读时写数据尚不存在。</p>
+            <div style="overflow-x:auto">
+            <table>
+                <tr><th>Group</th><th>R0 读取</th><th>W1 写入</th><th>结果</th></tr>
+                <tr style="background:rgba(239,68,68,0.1)"><td>G0</td><td>cycle 0</td><td>cycle 7</td><td>读时写未发生 → <span style="color:var(--accent-red)">STALE ✗</span></td></tr>
+                <tr><td>G1</td><td>cycle 1</td><td>cycle 0</td><td>写先于读 1cy → SRAM OK ✓</td></tr>
+                <tr><td>G2</td><td>cycle 2</td><td>cycle 1</td><td>写先于读 1cy → SRAM OK ✓</td></tr>
+                <tr><td>G3</td><td>cycle 3</td><td>cycle 2</td><td>写先于读 1cy → SRAM OK ✓</td></tr>
+                <tr><td>G4</td><td>cycle 4</td><td>cycle 3</td><td>写先于读 1cy → SRAM OK ✓</td></tr>
+                <tr><td>G5</td><td>cycle 5</td><td>cycle 4</td><td>写先于读 1cy → SRAM OK ✓</td></tr>
+                <tr><td>G6</td><td>cycle 6</td><td>cycle 5</td><td>写先于读 1cy → SRAM OK ✓</td></tr>
+                <tr><td>G7</td><td>cycle 7</td><td>cycle 6</td><td>写先于读 1cy → SRAM OK ✓</td></tr>
+            </table>
+            </div>
+            <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:8px;padding:1rem;margin-top:0.8rem">
+                <p style="color:var(--accent-orange);font-size:0.9rem;font-weight:600">调度规则</p>
+                <p style="color:var(--text-secondary);font-size:0.88rem">同一 8-cycle epoch 内，不同相位的读/写端口不得操作同一 tile_idx。同相位对（R0/W0, R1/W1, ..., R7/W7）始终安全并完全 bypass。跨相位对操作同一 tile 必须间隔<strong>至少 1 个完整 epoch（8 cycles）</strong>。</p>
+            </div>
         </div>
     </div>
 
@@ -1678,7 +1909,7 @@ flowchart LR
         var page = document.getElementById('page-' + pageName);
         if (page) { page.classList.add('active'); }
         var tabs = document.querySelectorAll('.nav-tab');
-        var pageNames = ['overview', 'pipeline', 'memory', 'outercube', 'evaluation'];
+        var pageNames = ['overview', 'pipeline', 'memory', 'vec4k', 'outercube', 'evaluation'];
         var idx = pageNames.indexOf(pageName);
         if (idx >= 0 && tabs[idx]) { tabs[idx].classList.add('active'); }
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2038,6 +2269,27 @@ flowchart LR
     // Called from navigateTo wrapper
     function reRenderMermaid(pageName) {
         renderMermaidInPage(pageName);
+    }
+
+    // VEC-4K example tab switcher
+    function showVecExample(id) {
+        var examples = ['exA', 'exB', 'exC', 'exD', 'exG'];
+        examples.forEach(function(e) {
+            var el = document.getElementById(e);
+            if (el) { el.style.display = (e === id) ? 'block' : 'none'; }
+        });
+        var btns = document.querySelectorAll('#vec-example-tabs button');
+        btns.forEach(function(b) {
+            if (b.id === 'btn-' + id) {
+                b.style.borderColor = 'var(--accent-cyan)';
+                b.style.background = 'rgba(0,212,255,0.15)';
+                b.classList.add('tag-cyan');
+            } else {
+                b.style.borderColor = 'var(--border-color)';
+                b.style.background = 'var(--bg-card)';
+                b.classList.remove('tag-cyan');
+            }
+        });
     }
 
     // Render the initial (active) page on load
