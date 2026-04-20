@@ -1,0 +1,1989 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LPU 架构深度解析 — Groq Language Processing Unit</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg-primary: #0c0a09;
+            --bg-secondary: #1c1917;
+            --bg-card: #292524;
+            --bg-card-hover: #3a3633;
+            --accent-orange: #FF6B35;
+            --accent-amber: #FFB800;
+            --accent-teal: #00D4AA;
+            --accent-blue: #3B82F6;
+            --accent-purple: #a855f7;
+            --text-primary: #fafaf9;
+            --text-secondary: #a8a29e;
+            --border-color: #44403c;
+            --shadow-glow: 0 0 30px rgba(255, 107, 53, 0.15);
+        }
+
+        body {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        /* 背景网格 */
+        .grid-bg {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-image:
+                linear-gradient(rgba(255, 107, 53, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 107, 53, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none; z-index: 0;
+        }
+
+        /* 浮动光晕 */
+        .glow-orb {
+            position: fixed; border-radius: 50%; filter: blur(100px);
+            opacity: 0.25; pointer-events: none; z-index: 0;
+        }
+        .glow-orb-1 {
+            width: 400px; height: 400px; background: var(--accent-orange);
+            top: -100px; right: -100px;
+            animation: float1 8s ease-in-out infinite;
+        }
+        .glow-orb-2 {
+            width: 300px; height: 300px; background: var(--accent-amber);
+            bottom: -50px; left: -50px;
+            animation: float2 10s ease-in-out infinite;
+        }
+        .glow-orb-3 {
+            width: 200px; height: 200px; background: var(--accent-teal);
+            top: 50%; left: 50%; opacity: 0.12;
+            animation: float3 12s ease-in-out infinite;
+        }
+
+        @keyframes float1 {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(-30px, 30px) scale(1.1); }
+            66% { transform: translate(20px, -20px) scale(0.9); }
+        }
+        @keyframes float2 {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            50% { transform: translate(40px, -40px) scale(1.15); }
+        }
+        @keyframes float3 {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-40%, -60%) scale(1.2); }
+        }
+
+        /* 顶部进度条 */
+        .progress-bar {
+            position: fixed; top: 0; left: 0; height: 3px; z-index: 200;
+            background: linear-gradient(90deg, var(--accent-orange), var(--accent-amber));
+            transition: width 0.15s ease-out;
+            box-shadow: 0 0 10px var(--accent-orange);
+        }
+
+        /* 顶部标题栏 */
+        .header {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+            background: rgba(12, 10, 9, 0.92);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.75rem 2rem;
+        }
+        .header-content {
+            max-width: 1400px; margin: 0 auto;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .logo {
+            font-size: 1.1rem; font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-orange), var(--accent-amber));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .header-nav {
+            display: flex; gap: 0.25rem;
+        }
+        .header-nav-item {
+            padding: 0.4rem 0.8rem; border-radius: 6px;
+            font-size: 0.8rem; color: var(--text-secondary);
+            cursor: pointer; transition: all 0.3s ease; border: none; background: none;
+        }
+        .header-nav-item:hover { color: var(--accent-orange); background: rgba(255,107,53,0.1); }
+        .header-nav-item.active { color: var(--accent-orange); background: rgba(255,107,53,0.15); }
+
+        /* 侧边导航 */
+        .sidebar {
+            position: fixed; left: 16px; top: 50%; transform: translateY(-50%);
+            z-index: 100; display: flex; flex-direction: column; gap: 0.75rem;
+        }
+        .nav-dot {
+            width: 12px; height: 12px; border-radius: 50%;
+            background: var(--border-color); cursor: pointer;
+            transition: all 0.3s ease; position: relative;
+        }
+        .nav-dot:hover { background: var(--accent-orange); transform: scale(1.3); }
+        .nav-dot.active {
+            background: var(--accent-orange);
+            box-shadow: 0 0 12px var(--accent-orange);
+            transform: scale(1.2);
+        }
+        .nav-dot .tooltip {
+            position: absolute; left: 24px; top: 50%; transform: translateY(-50%);
+            background: var(--bg-card); padding: 0.35rem 0.7rem; border-radius: 6px;
+            font-size: 0.75rem; white-space: nowrap; opacity: 0;
+            pointer-events: none; transition: opacity 0.3s ease;
+            border: 1px solid var(--border-color);
+        }
+        .nav-dot:hover .tooltip { opacity: 1; }
+
+        /* 主内容 */
+        .main-container {
+            max-width: 1200px; margin: 0 auto;
+            padding: 80px 2rem 4rem;
+            position: relative; z-index: 1;
+        }
+
+        /* Section 通用 */
+        .section {
+            min-height: 100vh; padding: 4rem 0 2rem;
+            opacity: 0; transform: translateY(30px);
+            transition: opacity 0.6s ease, transform 0.6s ease;
+        }
+        .section.visible { opacity: 1; transform: translateY(0); }
+
+        .section-badge {
+            display: inline-block; padding: 0.2rem 0.6rem;
+            background: rgba(255,107,53,0.15); border: 1px solid var(--accent-orange);
+            border-radius: 20px; font-size: 0.7rem; color: var(--accent-orange);
+            margin-bottom: 0.75rem; letter-spacing: 0.5px;
+        }
+        .section-title {
+            font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--text-primary), var(--accent-amber));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .section-subtitle {
+            color: var(--text-secondary); font-size: 0.95rem; margin-bottom: 2rem;
+        }
+
+        /* ============ Section 0: 架构总览 ============ */
+        #archCanvas {
+            width: 100%; height: 720px; border-radius: 16px;
+            background: var(--bg-secondary); border: 1px solid var(--border-color);
+            cursor: pointer;
+        }
+        .arch-panels {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;
+        }
+        .arch-panel {
+            padding: 1.2rem 1.5rem; border-radius: 12px;
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            transition: border-color 0.3s ease;
+        }
+        .arch-panel:hover { border-color: var(--accent-orange); }
+        .arch-panel h4 {
+            font-size: 0.9rem; margin-bottom: 0.5rem;
+            display: flex; align-items: center; gap: 0.5rem;
+        }
+        .arch-panel h4 .num {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 22px; height: 22px; border-radius: 6px;
+            background: rgba(255,107,53,0.15); color: var(--accent-orange);
+            font-size: 0.7rem; font-weight: 700;
+        }
+        .arch-panel p {
+            color: var(--text-secondary); font-size: 0.82rem; line-height: 1.7;
+        }
+        .arch-panel .metric {
+            display: inline-block; padding: 0.1rem 0.45rem;
+            background: rgba(255,184,0,0.1); border-radius: 4px;
+            color: var(--accent-amber); font-size: 0.78rem; font-weight: 600;
+            margin: 0.15rem 0.15rem 0.15rem 0;
+        }
+        .arch-panel .vs {
+            display: inline-block; padding: 0.1rem 0.45rem;
+            background: rgba(0,212,170,0.08); border-radius: 4px;
+            color: var(--accent-teal); font-size: 0.78rem;
+            margin-left: 0.3rem;
+        }
+        .arch-panel .vs-label {
+            color: var(--accent-teal); font-weight: 600;
+        }
+        .slice-legend {
+            display: flex; gap: 1.5rem; margin-top: 0.75rem; flex-wrap: wrap;
+        }
+        .legend-item {
+            display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+        .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .legend-line { width: 18px; height: 3px; border-radius: 2px; }
+
+        /* ============ Section 1: 技术规格 ============ */
+        .spec-table-wrap {
+            overflow-x: auto; border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+        .spec-table {
+            width: 100%; border-collapse: collapse; font-size: 0.85rem;
+        }
+        .spec-table th {
+            background: var(--bg-card); padding: 0.8rem 1rem;
+            text-align: left; font-weight: 600; color: var(--text-primary);
+            border-bottom: 2px solid var(--border-color); white-space: nowrap;
+        }
+        .spec-table th:first-child { min-width: 120px; }
+        .spec-table td {
+            padding: 0.7rem 1rem; border-bottom: 1px solid rgba(68,64,60,0.5);
+            color: var(--text-secondary);
+        }
+        .spec-table tr:hover td { background: rgba(255,107,53,0.03); }
+        .spec-table .highlight-cell { color: var(--accent-orange); font-weight: 600; }
+
+        /* 内联条形图 */
+        .bar-cell {
+            display: flex; align-items: center; gap: 0.5rem; min-width: 180px;
+        }
+        .bar-track {
+            flex: 1; height: 8px; background: var(--bg-primary);
+            border-radius: 4px; overflow: hidden;
+        }
+        .bar-fill {
+            height: 100%; border-radius: 4px;
+            transition: width 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+            width: 0;
+        }
+        .bar-fill.animated { /* width set by JS */ }
+        .bar-fill.orange { background: linear-gradient(90deg, var(--accent-orange), var(--accent-amber)); }
+        .bar-fill.blue { background: linear-gradient(90deg, var(--accent-blue), #60a5fa); }
+        .bar-fill.teal { background: linear-gradient(90deg, var(--accent-teal), #34d399); }
+        .bar-fill.purple { background: linear-gradient(90deg, var(--accent-purple), #c084fc); }
+        .bar-fill.gray { background: linear-gradient(90deg, #6b7280, #9ca3af); }
+
+        /* ============ Section 2: 性能基准 ============ */
+        #benchCanvas {
+            width: 100%; height: 420px; border-radius: 16px;
+            background: var(--bg-secondary); border: 1px solid var(--border-color);
+        }
+        .bench-legend {
+            display: flex; gap: 1.5rem; margin-top: 1rem; flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        /* ============ Section 3: 部署形态 ============ */
+        .deploy-layout {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;
+        }
+        .topology-card {
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            border-radius: 16px; padding: 1.5rem; cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transform-style: preserve-3d; perspective: 1000px;
+        }
+        .topology-card:hover {
+            border-color: var(--accent-orange);
+            transform: translateY(-4px);
+            box-shadow: 0 16px 40px rgba(0,0,0,0.3), 0 0 20px rgba(255,107,53,0.1);
+        }
+        .topology-card.active {
+            border-color: var(--accent-amber);
+            box-shadow: 0 0 20px rgba(255,184,0,0.15);
+        }
+        .topology-card h3 {
+            font-size: 1.1rem; margin-bottom: 0.5rem;
+            display: flex; align-items: center; gap: 0.5rem;
+        }
+        .topology-card p {
+            color: var(--text-secondary); font-size: 0.85rem; line-height: 1.6;
+        }
+        .topology-detail {
+            margin-top: 1rem; padding-top: 1rem;
+            border-top: 1px solid var(--border-color);
+            font-size: 0.8rem; color: var(--text-secondary);
+            display: none;
+        }
+        .topology-card.active .topology-detail { display: block; }
+
+        /* 缩放计算器 */
+        .calculator {
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            border-radius: 16px; padding: 2rem;
+        }
+        .calculator h3 {
+            font-size: 1.1rem; margin-bottom: 1.5rem;
+            color: var(--accent-amber);
+        }
+        .calc-group { margin-bottom: 1.5rem; }
+        .calc-label {
+            font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem;
+        }
+        .calc-buttons {
+            display: flex; flex-wrap: wrap; gap: 0.5rem;
+        }
+        .calc-btn {
+            padding: 0.5rem 1rem; background: var(--bg-secondary);
+            border: 1px solid var(--border-color); border-radius: 8px;
+            color: var(--text-secondary); cursor: pointer;
+            transition: all 0.3s ease; font-size: 0.85rem;
+        }
+        .calc-btn:hover { border-color: var(--accent-amber); color: var(--accent-amber); }
+        .calc-btn.selected {
+            background: rgba(255,184,0,0.15); border-color: var(--accent-amber);
+            color: var(--accent-amber);
+        }
+        .calc-result {
+            padding: 1.5rem; background: var(--bg-secondary);
+            border-radius: 12px; border: 1px solid var(--border-color);
+        }
+        .calc-result-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0.5rem 0;
+        }
+        .calc-result-row + .calc-result-row {
+            border-top: 1px solid rgba(68,64,60,0.5);
+        }
+        .calc-result-label { color: var(--text-secondary); font-size: 0.85rem; }
+        .calc-result-value {
+            font-weight: 700; font-size: 1.1rem; color: var(--accent-amber);
+        }
+        .calc-result-value.chips { color: var(--accent-orange); }
+        .calc-result-value.deploy { color: var(--accent-teal); }
+
+        /* ============ Section 4: 竞争格局 ============ */
+        #radarCanvas {
+            width: 100%; height: 460px; border-radius: 16px;
+            background: var(--bg-secondary); border: 1px solid var(--border-color);
+        }
+        .competitor-toggles {
+            display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap;
+            justify-content: center;
+        }
+        .comp-toggle {
+            padding: 0.4rem 0.8rem; border-radius: 20px;
+            font-size: 0.8rem; cursor: pointer;
+            border: 1px solid; transition: all 0.3s ease;
+            opacity: 0.5;
+        }
+        .comp-toggle.active { opacity: 1; }
+        .comp-toggle.groq { border-color: var(--accent-orange); color: var(--accent-orange); background: rgba(255,107,53,0.1); }
+        .comp-toggle.nvidia { border-color: var(--accent-green); color: var(--accent-green); background: rgba(16,185,129,0.1); }
+        .comp-toggle.google { border-color: var(--accent-blue); color: var(--accent-blue); background: rgba(59,130,246,0.1); }
+        .comp-toggle.cerebras { border-color: var(--accent-purple); color: var(--accent-purple); background: rgba(168,85,247,0.1); }
+        .comp-toggle.sambanova { border-color: var(--accent-amber); color: var(--accent-amber); background: rgba(255,184,0,0.1); }
+
+        /* 理念对比表 */
+        .philosophy-table {
+            width: 100%; border-collapse: collapse; font-size: 0.82rem;
+            margin-top: 2rem; border-radius: 12px; overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+        .philosophy-table th {
+            padding: 0.7rem 0.8rem; background: var(--bg-card);
+            text-align: left; font-weight: 600; border-bottom: 1px solid var(--border-color);
+        }
+        .philosophy-table td {
+            padding: 0.6rem 0.8rem; border-bottom: 1px solid rgba(68,64,60,0.4);
+            color: var(--text-secondary);
+        }
+
+        /* ============ Section 5: 设计启示 ============ */
+        .insight-cards {
+            display: grid; grid-template-columns: 1fr; gap: 1rem;
+        }
+        .insight-card {
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            border-radius: 16px; overflow: hidden; cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .insight-card:hover {
+            border-color: var(--accent-orange);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+        }
+        .insight-header {
+            padding: 1.2rem 1.5rem; display: flex;
+            justify-content: space-between; align-items: center;
+        }
+        .insight-header h3 {
+            font-size: 1rem; display: flex; align-items: center; gap: 0.6rem;
+        }
+        .insight-num {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 28px; height: 28px; border-radius: 8px;
+            background: rgba(255,107,53,0.15); color: var(--accent-orange);
+            font-size: 0.8rem; font-weight: 700;
+        }
+        .insight-expand {
+            width: 28px; height: 28px; border-radius: 50%;
+            background: var(--bg-secondary); border: none;
+            color: var(--text-secondary); cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.3s ease; font-size: 1.2rem;
+        }
+        .insight-card.open .insight-expand {
+            transform: rotate(180deg); background: rgba(255,107,53,0.2);
+            color: var(--accent-orange);
+        }
+        .insight-body {
+            max-height: 0; overflow: hidden;
+            transition: max-height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .insight-card.open .insight-body { max-height: 500px; }
+        .insight-content {
+            padding: 0 1.5rem 1.5rem;
+            color: var(--text-secondary); font-size: 0.88rem; line-height: 1.8;
+        }
+        .insight-content strong { color: var(--accent-amber); }
+        .insight-content .key-metric {
+            display: inline-block; padding: 0.15rem 0.5rem;
+            background: rgba(255,184,0,0.1); border-radius: 4px;
+            color: var(--accent-amber); font-size: 0.82rem; font-weight: 600;
+        }
+
+        /* 时间线 */
+        .timeline {
+            margin-top: 3rem; position: relative;
+            padding: 2rem 0;
+        }
+        .timeline::before {
+            content: ''; position: absolute;
+            top: 50%; left: 0; right: 0; height: 2px;
+            background: linear-gradient(90deg, transparent, var(--border-color), var(--accent-orange), var(--border-color), transparent);
+        }
+        .timeline-items {
+            display: flex; justify-content: space-between; position: relative;
+        }
+        .timeline-item {
+            text-align: center; flex: 1; cursor: default;
+            transition: transform 0.3s ease;
+        }
+        .timeline-item:hover { transform: translateY(-4px); }
+        .timeline-dot {
+            width: 16px; height: 16px; border-radius: 50%;
+            background: var(--bg-card); border: 2px solid var(--accent-orange);
+            margin: 0 auto 0.75rem; position: relative; z-index: 1;
+            transition: all 0.3s ease;
+        }
+        .timeline-item:hover .timeline-dot {
+            background: var(--accent-orange);
+            box-shadow: 0 0 12px var(--accent-orange);
+        }
+        .timeline-year {
+            font-size: 0.85rem; font-weight: 700;
+            color: var(--accent-orange); margin-bottom: 0.25rem;
+        }
+        .timeline-event {
+            font-size: 0.75rem; color: var(--text-secondary);
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed; bottom: 2rem; right: 2rem;
+            padding: 0.8rem 1.5rem; border-radius: 10px;
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            color: var(--text-primary); font-size: 0.85rem;
+            z-index: 300; opacity: 0; transform: translateY(20px);
+            transition: all 0.3s ease; pointer-events: none;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.success { border-color: var(--accent-teal); }
+        .toast.info { border-color: var(--accent-blue); }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .deploy-layout { grid-template-columns: 1fr; }
+            .section-title { font-size: 1.5rem; }
+            .header-nav { display: none; }
+            .sidebar { left: 8px; }
+            .main-container { padding: 80px 1rem 2rem; }
+        }
+    </style>
+</head>
+<body>
+    <!-- 背景效果 -->
+    <div class="grid-bg"></div>
+    <div class="glow-orb glow-orb-1"></div>
+    <div class="glow-orb glow-orb-2"></div>
+    <div class="glow-orb glow-orb-3"></div>
+
+    <!-- 顶部进度条 -->
+    <div class="progress-bar" id="progressBar"></div>
+
+    <!-- 顶部标题栏 -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">LPU Architecture Deep Dive</div>
+            <nav class="header-nav" id="headerNav">
+                <button class="header-nav-item active" data-section="0">架构总览</button>
+                <button class="header-nav-item" data-section="1">技术规格</button>
+                <button class="header-nav-item" data-section="2">性能基准</button>
+                <button class="header-nav-item" data-section="3">部署形态</button>
+                <button class="header-nav-item" data-section="4">竞争格局</button>
+                <button class="header-nav-item" data-section="5">设计启示</button>
+            </nav>
+        </div>
+    </header>
+
+    <!-- 侧边导航 -->
+    <nav class="sidebar" id="sidebar">
+        <div class="nav-dot active" data-section="0"><span class="tooltip">架构总览</span></div>
+        <div class="nav-dot" data-section="1"><span class="tooltip">技术规格</span></div>
+        <div class="nav-dot" data-section="2"><span class="tooltip">性能基准</span></div>
+        <div class="nav-dot" data-section="3"><span class="tooltip">部署形态</span></div>
+        <div class="nav-dot" data-section="4"><span class="tooltip">竞争格局</span></div>
+        <div class="nav-dot" data-section="5"><span class="tooltip">设计启示</span></div>
+    </nav>
+
+    <!-- 主内容 -->
+    <main class="main-container">
+
+        <!-- ======== Section 0: 架构总览 ======== -->
+        <section class="section" id="section-0">
+            <span class="section-badge">SECTION 0</span>
+            <h1 class="section-title">架构总览 — 确定性流式架构与 PPA 优势</h1>
+            <p class="section-subtitle">功能切片翻转设计消除所有动态硬件结构，将节省的晶体管重投入计算与 SRAM，实现 ~15x 推理能效</p>
+            <canvas id="archCanvas"></canvas>
+            <div class="slice-legend">
+                <div class="legend-item"><span class="legend-line" style="background:#FF6B35"></span>权重流 (W)</div>
+                <div class="legend-item"><span class="legend-line" style="background:#00D4AA"></span>激活流 (A)</div>
+                <div class="legend-item"><span class="legend-line" style="background:#FFB800"></span>中间结果 (I)</div>
+                <div class="legend-item"><span class="legend-dot" style="background:#3B82F6"></span>ICU 控制信号</div>
+                <div class="legend-item"><span class="legend-line" style="background:rgba(255,107,53,0.3);border:1px dashed rgba(255,107,53,0.5)"></span>Streaming Fabric</div>
+                <div class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>已消除的硬件 (红)</div>
+            </div>
+            <div class="arch-panels">
+                <div class="arch-panel" id="panel-determinism">
+                    <h4><span class="num">P</span>PPA 优势：确定性消除动态开销</h4>
+                    <p>
+                        GPU 的缓存/分支预测/乱序执行等动态结构占用 <span class="metric">~30-40% 芯片面积</span>，但只为推理带来 <span class="metric">50-60% 利用率</span>。
+                        <br>LPU 消除全部动态结构后，将节省的面积投入：
+                        <span class="metric">5120 ALU</span>
+                        <span class="metric">230MB SRAM</span>
+                        <span class="metric">320 SIMD 宽度</span>
+                        — 以 14nm 达到 4nm GPU 的有效推理吞吐。
+                    </p>
+                </div>
+                <div class="arch-panel" id="panel-sram">
+                    <h4><span class="num">M</span>PPA 优势：SRAM-only 消除存储墙</h4>
+                    <p>
+                        推理 60-80% 时间在等 HBM。LPU 230MB SRAM 1-cycle 访问
+                        <span class="metric">80 TB/s</span>
+                        <span class="vs"><span class="vs-label">vs H100</span> 3.35 TB/s (24x)</span>
+                        <span class="vs"><span class="vs-label">延迟</span> 1 cycle vs 400+ cycles</span>
+                        <br>SRAM 访问能耗 <span class="metric">1-3 J/token</span>
+                        <span class="vs"><span class="vs-label">vs HBM</span> 10-30 J/token (10x 节能)</span>。
+                        无需 HBM 封装（CoWoS），14nm 成本优势显著。
+                    </p>
+                </div>
+                <div class="arch-panel" id="panel-compiler">
+                    <h4><span class="num">C</span>PPA 优势：编译器空间调度</h4>
+                    <p>
+                        编译器做 <strong>二维调度</strong>：时间（时钟周期）+ 空间（功能切片位置）。
+                        <span class="metric">144 独立指令队列</span>
+                        <span class="metric">64 逻辑流/通道</span>
+                        <span class="metric">128 SRAM Bank</span>
+                        <br>Producer-Consumer 流模型：数据自动从产生者流到消费者，无需运行时仲裁、无需 request/response 握手，带宽利用率逼近理论极限。
+                    </p>
+                </div>
+                <div class="arch-panel" id="panel-fabric">
+                    <h4><span class="num">F</span>PPA 优势：功能切片翻转</h4>
+                    <p>
+                        传统芯片：<strong>核心内嵌功能单元</strong>（每个 core 有自己的 ALU/MEM），功能冗余。
+                        LPU：<strong>功能单元组成列切片</strong>（ICU/VXM/MXM/SXM/MEM 各一列），共享数据路径。
+                        <span class="metric">20 tiles/slice × 16 elem/tile = 320 SIMD</span>
+                        <br>SXM 在数据传递途中零周期完成 transpose/broadcast/reshape — GPU 需额外 load/store 到全局内存。
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ======== Section 1: 技术规格对比 ======== -->
+        <section class="section" id="section-1">
+            <span class="section-badge">SECTION 1</span>
+            <h1 class="section-title">技术规格对比</h1>
+            <p class="section-subtitle">LPU 与主流 AI 加速芯片的关键参数对比 — 每行附带相对值条形图</p>
+            <div class="spec-table-wrap">
+                <table class="spec-table" id="specTable">
+                    <thead>
+                        <tr>
+                            <th>参数</th>
+                            <th>LPU v1</th>
+                            <th>Groq 3</th>
+                            <th>NVIDIA H100</th>
+                            <th>TPU v5p</th>
+                            <th>Cerebras CS-3</th>
+                        </tr>
+                    </thead>
+                    <tbody id="specTableBody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ======== Section 2: 性能基准测试 ======== -->
+        <section class="section" id="section-2">
+            <span class="section-badge">SECTION 2</span>
+            <h1 class="section-title">性能基准测试</h1>
+            <p class="section-subtitle">Tokens/sec 对比 — LPU 在推理吞吐上展现数量级优势</p>
+            <canvas id="benchCanvas"></canvas>
+            <div class="bench-legend">
+                <div class="legend-item"><span class="legend-dot" style="background:#FF6B35"></span>LPU</div>
+                <div class="legend-item"><span class="legend-dot" style="background:#00D4AA"></span>NVIDIA H100</div>
+                <div class="legend-item"><span class="legend-dot" style="background:#3B82F6"></span>NVIDIA A100</div>
+            </div>
+        </section>
+
+        <!-- ======== Section 3: 部署形态与扩展 ======== -->
+        <section class="section" id="section-3">
+            <span class="section-badge">SECTION 3</span>
+            <h1 class="section-title">部署形态与扩展</h1>
+            <p class="section-subtitle">从云端 API 到大规模集群 — 三级部署拓扑与模型-芯片缩放计算</p>
+            <div class="deploy-layout">
+                <div style="display:flex;flex-direction:column;gap:1rem;">
+                    <div class="topology-card active" data-tier="cloud" onclick="selectTier(this)">
+                        <h3 style="color:var(--accent-orange)">
+                            <span style="font-size:1.3rem">&#9729;</span> GroqCloud API
+                        </h3>
+                        <p>云端推理服务，开发者通过 REST API 调用，支持 Llama、Mixtral 等主流模型。毫秒级首 token 延迟。</p>
+                        <div class="topology-detail">
+                            <strong>规格：</strong>共享推理集群，按 token 计费<br>
+                            <strong>延迟：</strong>首 token ~15ms（Llama 3 8B）<br>
+                            <strong>适用：</strong>生产环境、原型验证、弹性负载
+                        </div>
+                    </div>
+                    <div class="topology-card" data-tier="pod" onclick="selectTier(this)">
+                        <h3 style="color:var(--accent-amber)">
+                            <span style="font-size:1.3rem">&#9638;</span> GroqPod
+                        </h3>
+                        <p>单机柜部署单元，包含 576 颗 LPU 芯片，可运行 70B 参数模型。面向企业私有化部署。</p>
+                        <div class="topology-detail">
+                            <strong>规格：</strong>576 chips/pod，机柜形式<br>
+                            <strong>模型容量：</strong>70B 参数（单 Pod）<br>
+                            <strong>适用：</strong>企业私有云、数据主权场景
+                        </div>
+                    </div>
+                    <div class="topology-card" data-tier="rack" onclick="selectTier(this)">
+                        <h3 style="color:var(--accent-teal)">
+                            <span style="font-size:1.3rem">&#9776;</span> GroqRack
+                        </h3>
+                        <p>多 Pod 集群，支持 405B+ 超大模型，面向超大规模部署场景。</p>
+                        <div class="topology-detail">
+                            <strong>规格：</strong>2880+ chips，多 Pod 互联<br>
+                            <strong>模型容量：</strong>405B+ 参数<br>
+                            <strong>适用：</strong>超大模型训练/推理、国家级基础设施
+                        </div>
+                    </div>
+                </div>
+                <div class="calculator" id="calculator">
+                    <h3>模型-芯片缩放计算器</h3>
+                    <div class="calc-group">
+                        <div class="calc-label">选择模型参数量</div>
+                        <div class="calc-buttons" id="modelButtons">
+                            <button class="calc-btn" data-params="7">7B</button>
+                            <button class="calc-btn" data-params="13">13B</button>
+                            <button class="calc-btn" data-params="34">34B</button>
+                            <button class="calc-btn selected" data-params="70">70B</button>
+                            <button class="calc-btn" data-params="405">405B</button>
+                        </div>
+                    </div>
+                    <div class="calc-group">
+                        <div class="calc-label">精度选择</div>
+                        <div class="calc-buttons" id="precisionButtons">
+                            <button class="calc-btn selected" data-prec="16">FP16 / BF16</button>
+                            <button class="calc-btn" data-prec="8">INT8</button>
+                            <button class="calc-btn" data-prec="4">INT4</button>
+                        </div>
+                    </div>
+                    <div class="calc-result" id="calcResult"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ======== Section 4: 竞争格局 ======== -->
+        <section class="section" id="section-4">
+            <span class="section-badge">SECTION 4</span>
+            <h1 class="section-title">竞争格局分析</h1>
+            <p class="section-subtitle">六维雷达图对比五大 AI 推理芯片厂商的核心竞争力</p>
+            <canvas id="radarCanvas"></canvas>
+            <div class="competitor-toggles" id="compToggles">
+                <button class="comp-toggle groq active" data-comp="groq">Groq LPU</button>
+                <button class="comp-toggle nvidia active" data-comp="nvidia">NVIDIA H100</button>
+                <button class="comp-toggle google active" data-comp="google">Google TPU</button>
+                <button class="comp-toggle cerebras active" data-comp="cerebras">Cerebras</button>
+                <button class="comp-toggle sambanova active" data-comp="sambanova">SambaNova</button>
+            </div>
+            <table class="philosophy-table">
+                <thead>
+                    <tr>
+                        <th>维度</th>
+                        <th>Groq LPU</th>
+                        <th>NVIDIA GPU</th>
+                        <th>Google TPU</th>
+                        <th>Cerebras</th>
+                        <th>SambaNova</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>核心理念</strong></td>
+                        <td>确定性执行</td>
+                        <td>通用并行计算</td>
+                        <td>矩阵优化</td>
+                        <td>晶圆级计算</td>
+                        <td>可重构数据流</td>
+                    </tr>
+                    <tr>
+                        <td><strong>存储策略</strong></td>
+                        <td class="highlight-cell">230MB SRAM</td>
+                        <td>80GB HBM3</td>
+                        <td>95GB HBM2e</td>
+                        <td class="highlight-cell">40GB SRAM</td>
+                        <td>320GB DDR4</td>
+                    </tr>
+                    <tr>
+                        <td><strong>调度方式</strong></td>
+                        <td>编译期静态</td>
+                        <td>运行时动态</td>
+                        <td>编译期静态</td>
+                        <td>运行时动态</td>
+                        <td>编译期静态</td>
+                    </tr>
+                    <tr>
+                        <td><strong>延迟特性</strong></td>
+                        <td class="highlight-cell">p99 ≈ p50</td>
+                        <td>高尾延迟</td>
+                        <td>中等尾延迟</td>
+                        <td>低尾延迟</td>
+                        <td>中等尾延迟</td>
+                    </tr>
+                    <tr>
+                        <td><strong>目标场景</strong></td>
+                        <td>推理专用</td>
+                        <td>训练+推理</td>
+                        <td>训练+推理</td>
+                        <td>训练+推理</td>
+                        <td>推理为主</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- ======== Section 5: 架构设计启示 ======== -->
+        <section class="section" id="section-5">
+            <span class="section-badge">SECTION 5</span>
+            <h1 class="section-title">架构设计启示</h1>
+            <p class="section-subtitle">从 LPU 的架构决策中提炼出的五条关键设计洞察</p>
+            <div class="insight-cards" id="insightCards">
+                <div class="insight-card" onclick="toggleInsight(this)">
+                    <div class="insight-header">
+                        <h3><span class="insight-num">1</span>软件先于硬件</h3>
+                        <button class="insight-expand">&#9660;</button>
+                    </div>
+                    <div class="insight-body">
+                        <div class="insight-content">
+                            Groq 采取了一种反常规的路径：<strong>编译器团队先于芯片团队成立</strong>。创始人 Jonathan Ross 在 Google TPU 团队工作期间就意识到，传统硬件先行的模式导致编译器不得不迁就硬件的不完美设计。在 Groq，编译器团队花了两年时间打磨软件栈，定义了理想的硬件接口，然后芯片团队才按照编译器的要求来设计电路。这种"软件定义硬件"的理念意味着：<strong>硬件不再是通用计算平台，而是编译器指令的直接物理映射</strong>。结果是编译器利用率极高，硬件几乎没有闲置周期。
+                            <br><br>
+                            <span class="key-metric">启示：领域特定架构（DSA）的成功关键在于先理解软件需求，再设计硬件</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="insight-card" onclick="toggleInsight(this)">
+                    <div class="insight-header">
+                        <h3><span class="insight-num">2</span>确定性 &gt; 峰值吞吐</h3>
+                        <button class="insight-expand">&#9660;</button>
+                    </div>
+                    <div class="insight-body">
+                        <div class="insight-content">
+                            传统 GPU 通过动态调度追求峰值算力利用率，但代价是<strong>不可预测的延迟</strong>。在真实 serving 场景中，p99 延迟可能比 p50 高 10-50 倍，这对用户体验和 SLA 是灾难性的。LPU 选择了确定性执行路径：所有数据移动和计算在编译期完全确定，运行时零调度开销。这意味着 <strong>p99 延迟接近 p50 延迟</strong>，服务提供商可以给出确定性的性能承诺。虽然 LPU 的峰值算力（750 TOPS）不及 H100（~2000 TOPS），但在实际推理吞吐中，LPU 通过消除调度开销和存储瓶颈，实现了更高的有效算力。
+                            <br><br>
+                            <span class="key-metric">LPU p99/p50 延迟比 &lt; 1.2x，GPU 通常 &gt; 5x</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="insight-card" onclick="toggleInsight(this)">
+                    <div class="insight-header">
+                        <h3><span class="insight-num">3</span>SRAM-only 消除内存墙</h3>
+                        <button class="insight-expand">&#9660;</button>
+                    </div>
+                    <div class="insight-body">
+                        <div class="insight-content">
+                            "内存墙"是 AI 芯片最核心的瓶颈。HBM 虽然提供了大容量（80GB），但带宽仅 <strong>3.35 TB/s</strong>。LPU 大胆放弃了外部存储，采用纯 SRAM 方案：<strong>230MB 片上 SRAM，80 TB/s 带宽</strong>。虽然容量小了 350 倍，但带宽高了 24 倍。关键洞察是：对于推理场景（非训练），模型权重可以预先加载到片上，运行时只需在 SRAM 内部做激活值的读写。80 TB/s 的带宽意味着矩阵乘法的每个操作数都能在一个时钟周期内就绪，计算单元几乎永远不会等待数据。这是 LPU 高推理吞吐的物理基础。
+                            <br><br>
+                            <span class="key-metric">80 TB/s SRAM vs 3.35 TB/s HBM — 带宽优势 24x</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="insight-card" onclick="toggleInsight(this)">
+                    <div class="insight-header">
+                        <h3><span class="insight-num">4</span>领域特定 &gt; 通用计算</h3>
+                        <button class="insight-expand">&#9660;</button>
+                    </div>
+                    <div class="insight-body">
+                        <div class="insight-content">
+                            LPU 是领域特定架构（DSA）理念的极致表达。它不支持 CUDA、不支持通用浮点运算、不能跑图像处理或科学计算。<strong>它只做一件事：大语言模型推理</strong>。但这种极致的专注带来了巨大优势：芯片面积利用率极高，每个晶体管都为推理服务；编译器优化空间大，可以做全程序分析；功耗效率好，因为没有为通用性付出任何代价。Hennessy 和 Patterson 在 2018 年图灵奖演讲中预言了 DSA 的崛起，LPU 是这一趋势的标杆案例。它证明了：在 AI 推理这个市场规模足够大的领域，专用芯片可以全面碾压通用芯片。
+                            <br><br>
+                            <span class="key-metric">LPU 推理能效比 ~30 TOPS/W，H100 ~2 TOPS/W（推理场景）</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="insight-card" onclick="toggleInsight(this)">
+                    <div class="insight-header">
+                        <h3><span class="insight-num">5</span>编译器即架构</h3>
+                        <button class="insight-expand">&#9660;</button>
+                    </div>
+                    <div class="insight-body">
+                        <div class="insight-content">
+                            在传统架构中，编译器是将高级语言"翻译"为机器指令的工具，它需要适应硬件的各种限制（寄存器数量、缓存层级、执行端口等）。但在 LPU 中，<strong>编译器和硬件的边界被彻底打破</strong>。Groq 编译器不仅生成指令，还直接编排片上存储的分配、数据在功能单元间的路由、甚至时钟周期的精确分配。可以认为：LPU 的硬件本质上就是编译器 IR（中间表示）的物理实现。这种极端的软硬件协同设计带来了前所未有的效率，但也意味着迁移到新模型或新算子时，编译器需要重新优化。
+                            <br><br>
+                            <span class="key-metric">启示：当编译器和硬件共同进化时，系统效率可以逼近理论极限</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 时间线 -->
+            <div class="timeline">
+                <div class="timeline-items">
+                    <div class="timeline-item">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-year">2016</div>
+                        <div class="timeline-event">Groq 成立<br>编译器团队先行</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-year">2020</div>
+                        <div class="timeline-event">LPU v1 流片<br>14nm TSMC</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-year">2023</div>
+                        <div class="timeline-event">GroqCloud 上线<br>API 服务开放</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-year">2024</div>
+                        <div class="timeline-event">GroqPod 发布<br>企业级部署</div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-year">2025</div>
+                        <div class="timeline-event">Groq 3 发布<br>新一代架构</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+    // roundRect polyfill
+    if (!CanvasRenderingContext2D.prototype.roundRect) {
+        CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+            if (typeof r === 'number') r = [r, r, r, r];
+            const [tl, tr, br, bl] = r;
+            this.moveTo(x + tl, y);
+            this.lineTo(x + w - tr, y);
+            this.quadraticCurveTo(x + w, y, x + w, y + tr);
+            this.lineTo(x + w, y + h - br);
+            this.quadraticCurveTo(x + w, y + h, x + w - br, y + h);
+            this.lineTo(x + bl, y + h);
+            this.quadraticCurveTo(x, y + h, x, y + h - bl);
+            this.lineTo(x, y + tl);
+            this.quadraticCurveTo(x, y, x + tl, y);
+            this.closePath();
+        };
+    }
+
+    // ==================== 通用工具 ====================
+    function showToast(msg, type = 'info') {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.className = `toast ${type} show`;
+        setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    // ==================== 导航与滚动 ====================
+    const sections = document.querySelectorAll('.section');
+    const navDots = document.querySelectorAll('.nav-dot');
+    const headerItems = document.querySelectorAll('.header-nav-item');
+    const progressBar = document.getElementById('progressBar');
+
+    // IntersectionObserver 检测当前 section
+    const sectionObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('visible');
+                const idx = Array.from(sections).indexOf(entry.target);
+                updateNav(idx);
+                // 触发 section 特定动画
+                if (idx === 1) animateSpecBars();
+                if (idx === 2) animateBenchChart();
+                if (idx === 4) animateRadarChart();
+            }
+        });
+    }, { threshold: 0.25 });
+
+    sections.forEach(s => sectionObserver.observe(s));
+
+    // 滚动进度
+    window.addEventListener('scroll', () => {
+        const scrollTop = window.scrollY;
+        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        const pct = Math.min(scrollTop / docHeight * 100, 100);
+        progressBar.style.width = pct + '%';
+    });
+
+    function updateNav(idx) {
+        navDots.forEach((d, i) => d.classList.toggle('active', i === idx));
+        headerItems.forEach((h, i) => h.classList.toggle('active', i === idx));
+    }
+
+    // 点击导航
+    navDots.forEach(d => d.addEventListener('click', () => {
+        const idx = parseInt(d.dataset.section);
+        document.getElementById(`section-${idx}`).scrollIntoView({ behavior: 'smooth' });
+    }));
+    headerItems.forEach(h => h.addEventListener('click', () => {
+        const idx = parseInt(h.dataset.section);
+        document.getElementById(`section-${idx}`).scrollIntoView({ behavior: 'smooth' });
+    }));
+
+    // ==================== Section 0: LPU 架构详解 ====================
+    const archCanvas = document.getElementById('archCanvas');
+    const actx = archCanvas.getContext('2d');
+    let archW, archH, dpr;
+
+    function resizeArchCanvas() {
+        dpr = window.devicePixelRatio || 1;
+        const rect = archCanvas.getBoundingClientRect();
+        archW = rect.width; archH = rect.height;
+        archCanvas.width = archW * dpr;
+        archCanvas.height = archH * dpr;
+        actx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    resizeArchCanvas();
+    window.addEventListener('resize', () => { resizeArchCanvas(); });
+
+    // 架构布局参数
+    const FU = [
+        { id:'ICU', label:'ICU', sub:'Instruction\nControl', color:'#3B82F6',
+          spec:'编译期预编排\n零运行时调度\n确定性时钟周期',
+          detail:'ICU 是 LPU 的指令控制单元。与传统 CPU 的乱序执行不同，ICU 在运行时只做一件事：按照编译器预编排的指令流，逐周期驱动后续功能单元。没有分支预测、没有乱序调度、没有寄存器重命名。每个时钟周期执行什么操作，在编译时已经完全确定。ICU 本身非常简单——复杂性全部在编译器端。' },
+        { id:'VXM', label:'VXM', sub:'Vector\nMath', color:'#00D4AA',
+          spec:'5120 Vector ALU\nGeLU / SiLU / RMSNorm\n逐元素运算',
+          detail:'VXM 包含 5120 个向量 ALU，负责所有逐元素运算：激活函数（GeLU、SiLU）、归一化（LayerNorm、RMSNorm）、逐点加法、缩放等。编译器精确调度每个向量操作的数据到达时刻，确保所有 ALU 在每个周期都有数据可处理——实现 100% 利用率。' },
+        { id:'MXM', label:'MXM', sub:'Matrix\nMultiply', color:'#FF6B35',
+          spec:'750 TOPS INT8\n320\u00d7320 FDP\n102,400 MAC/cycle',
+          detail:'MXM 是 LPU 的计算核心。采用 320\u00d7320 融合点积（Fused Dot-Product）架构，单次操作完成 102,400 个乘加运算。与传统 GPU 的稀疏利用率不同，MXM 在编译期精确编排每个权重和激活值的到达时间，实现接近 100% 的硬件利用率。这是 LPU 推理吞吐远超 GPU 的核心原因。' },
+        { id:'SXM', label:'SXM', sub:'Switch\nUnit', color:'#FFB800',
+          spec:'零开销转置/广播\nReshape / Concat\n传输途中变换',
+          detail:'SXM 是 LPU 最独特的功能单元——它在数据从一个功能单元传递到下一个的途中完成格式变换。转置（transpose）、广播（broadcast）、reshape、concatenate 全部零额外时钟周期。在传统 GPU 上，这些操作需要额外的全局内存读写，是严重的性能瓶颈。' },
+        { id:'MEM', label:'MEM', sub:'On-chip\nSRAM', color:'#a855f7',
+          spec:'230 MB SRAM\n80 TB/s 带宽\n无 HBM / 无 DRAM',
+          detail:'MEM 是 230MB 的片上 SRAM 集合，提供 80 TB/s 带宽——是 H100 HBM3 带宽（3.35 TB/s）的 24 倍。LPU 不使用任何外部存储，所有模型权重和激活值驻留片上。对于推理场景，权重在启动时加载一次，运行时只读写激活值，230MB 足以容纳 70B 模型的激活工作集。' }
+    ];
+
+    // 悬停状态
+    let hoveredFU = -1;
+    let selectedFU = -1;
+
+    // 数据流粒子 — 沿特定路径流动
+    class FlowParticle {
+        constructor(pathType) {
+            this.pathType = pathType; // 'weight', 'activation', 'intermediate'
+            this.reset();
+        }
+        reset() {
+            this.t = Math.random();
+            this.speed = 0.0015 + Math.random() * 0.002;
+            this.size = 2 + Math.random() * 2;
+            this.trail = [];
+            this.maxTrail = 8 + Math.floor(Math.random() * 6);
+            // 随机选一条路径
+            this.pathIdx = Math.floor(Math.random() * 4);
+        }
+        getColor() {
+            if (this.pathType === 'weight') return '#FF6B35';
+            if (this.pathType === 'activation') return '#00D4AA';
+            return '#FFB800';
+        }
+    }
+
+    const flowParticles = [];
+    for (let i = 0; i < 25; i++) flowParticles.push(new FlowParticle('weight'));
+    for (let i = 0; i < 20; i++) flowParticles.push(new FlowParticle('activation'));
+    for (let i = 0; i < 15; i++) flowParticles.push(new FlowParticle('intermediate'));
+
+    // 绘制工具函数
+    function hexAlpha(hex, a) {
+        return hex + Math.floor(a * 255).toString(16).padStart(2, '0');
+    }
+
+    function drawRoundRect(ctx, x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, r);
+    }
+
+    // 计算架构图布局
+    function getLayout() {
+        const pad = { top: 52, bottom: 80, left: 20, right: 160 };
+        // 顶部编译器区
+        const compilerH = 46;
+        const compilerY = pad.top;
+        const compilerW = archW - pad.left - pad.right;
+        const compilerX = pad.left;
+
+        // 功能单元区
+        const fuStartY = compilerY + compilerH + 28;
+        const fuCount = FU.length;
+        const fuGap = 6;
+        const fuTotalGap = fuGap * (fuCount - 1);
+        const fuW = Math.min(160, (archW - pad.left - pad.right - fuTotalGap) / fuCount);
+        const fuH = 120;
+        const fuStartX = pad.left + (archW - pad.left - pad.right - fuCount * fuW - fuTotalGap) / 2;
+
+        // SRAM 条
+        const sramY = fuStartY + fuH + 16;
+        const sramH = 36;
+        const sramW = fuCount * fuW + fuTotalGap;
+
+        // 数据流路径区（SRAM 下方）
+        const pathStartY = sramY + sramH + 20;
+        const pathH = archH - pathStartY - pad.bottom - 10;
+
+        return { pad, compilerX, compilerY, compilerW, compilerH,
+                 fuStartX, fuStartY, fuW, fuH, fuCount, fuGap,
+                 sramY, sramH, sramW, pathStartY, pathH };
+    }
+
+    // 获取功能单元位置
+    function getFURect(i) {
+        const L = getLayout();
+        const x = L.fuStartX + i * (L.fuW + L.fuGap);
+        return { x, y: L.fuStartY, w: L.fuW, h: L.fuH };
+    }
+
+    // 获取功能单元中心
+    function getFUCenter(i) {
+        const r = getFURect(i);
+        return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+    }
+
+    // 绘制架构图主函数
+    function drawArch(time) {
+        actx.clearRect(0, 0, archW, archH);
+        const L = getLayout();
+
+        // === 1. 编译器层 ===
+        drawRoundRect(actx, L.compilerX, L.compilerY, L.compilerW, L.compilerH, 8);
+        const cGrad = actx.createLinearGradient(L.compilerX, L.compilerY, L.compilerX + L.compilerW, L.compilerY);
+        cGrad.addColorStop(0, 'rgba(59,130,246,0.12)');
+        cGrad.addColorStop(0.5, 'rgba(255,107,53,0.12)');
+        cGrad.addColorStop(1, 'rgba(59,130,246,0.12)');
+        actx.fillStyle = cGrad;
+        actx.fill();
+        actx.strokeStyle = 'rgba(59,130,246,0.4)';
+        actx.lineWidth = 1.5;
+        actx.setLineDash([6, 4]);
+        actx.lineDashOffset = -time * 0.02;
+        actx.stroke();
+        actx.setLineDash([]);
+
+        actx.fillStyle = '#3B82F6';
+        actx.font = 'bold 13px "SF Pro Display", sans-serif';
+        actx.textAlign = 'center';
+        actx.textBaseline = 'middle';
+        actx.fillText('Groq Compiler', L.compilerX + L.compilerW * 0.3, L.compilerY + L.compilerH / 2);
+
+        actx.fillStyle = '#a8a29e';
+        actx.font = '11px "SF Pro Display", sans-serif';
+        actx.textAlign = 'left';
+        const compilerTasks = ['算子融合', '寄存器分配', '路由调度', '时钟分配', '存储布局'];
+        const taskStartX = L.compilerX + L.compilerW * 0.46;
+        compilerTasks.forEach((t, i) => {
+            const tx = taskStartX + i * (L.compilerW * 0.54 / compilerTasks.length);
+            actx.fillStyle = 'rgba(255,107,53,0.25)';
+            drawRoundRect(actx, tx, L.compilerY + 10, L.compilerW * 0.09, L.compilerH - 20, 4);
+            actx.fill();
+            actx.fillStyle = '#FF6B35';
+            actx.font = '10px "SF Pro Display", sans-serif';
+            actx.textAlign = 'center';
+            actx.fillText(t, tx + L.compilerW * 0.045, L.compilerY + L.compilerH / 2);
+        });
+
+        // 编译器到 FU 的箭头
+        for (let i = 0; i < L.fuCount; i++) {
+            const fc = getFUCenter(i);
+            const arrowTopY = L.compilerY + L.compilerH + 2;
+            const arrowBotY = L.fuStartY - 2;
+            const pulse = Math.sin(time * 0.003 + i * 0.8) * 0.3 + 0.7;
+            actx.strokeStyle = hexAlpha('#3B82F6', pulse * 0.4);
+            actx.lineWidth = 1;
+            actx.beginPath();
+            actx.moveTo(fc.x, arrowTopY);
+            actx.lineTo(fc.x, arrowBotY);
+            actx.stroke();
+            // 箭头头部
+            actx.fillStyle = hexAlpha('#3B82F6', pulse * 0.5);
+            actx.beginPath();
+            actx.moveTo(fc.x, arrowBotY);
+            actx.lineTo(fc.x - 3, arrowBotY - 6);
+            actx.lineTo(fc.x + 3, arrowBotY - 6);
+            actx.fill();
+        }
+
+        // === 2. 流交换网络（FU 之间的连接） ===
+        for (let i = 0; i < L.fuCount - 1; i++) {
+            const r1 = getFURect(i);
+            const r2 = getFURect(i + 1);
+            const x1 = r1.x + r1.w;
+            const x2 = r2.x;
+            const cy = r1.y + r1.h / 2;
+            const isHighlight = (hoveredFU === i || hoveredFU === i + 1 || selectedFU === i || selectedFU === i + 1);
+
+            // 交换网络背景
+            actx.fillStyle = isHighlight ? 'rgba(255,107,53,0.08)' : 'rgba(255,107,53,0.02)';
+            drawRoundRect(actx, x1 + 1, cy - 20, x2 - x1 - 2, 40, 4);
+            actx.fill();
+
+            // 多条数据通路
+            const lanes = 3;
+            for (let l = 0; l < lanes; l++) {
+                const ly = cy - 8 + l * 8;
+                const offset = (time * 0.04 + l * 3) % 12;
+                actx.strokeStyle = isHighlight ? 'rgba(255,107,53,0.5)' : 'rgba(255,107,53,0.2)';
+                actx.lineWidth = 1.5;
+                actx.setLineDash([4, 8]);
+                actx.lineDashOffset = -offset;
+                actx.beginPath();
+                actx.moveTo(x1 + 3, ly);
+                actx.lineTo(x2 - 3, ly);
+                actx.stroke();
+            }
+            actx.setLineDash([]);
+
+            // 标注
+            if (L.fuGap > 16) {
+                actx.fillStyle = isHighlight ? 'rgba(255,184,0,0.8)' : 'rgba(255,184,0,0.4)';
+                actx.font = '8px "SF Pro Display", sans-serif';
+                actx.textAlign = 'center';
+                actx.fillText('Fabric', (x1 + x2) / 2, cy + 28);
+            }
+        }
+
+        // === 3. 功能单元 ===
+        FU.forEach((fu, i) => {
+            const r = getFURect(i);
+            const isHover = (hoveredFU === i || selectedFU === i);
+
+            // 背景渐变
+            const grad = actx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+            grad.addColorStop(0, hexAlpha(fu.color, isHover ? 0.22 : 0.10));
+            grad.addColorStop(1, hexAlpha(fu.color, isHover ? 0.08 : 0.03));
+            actx.fillStyle = grad;
+            drawRoundRect(actx, r.x, r.y, r.w, r.h, 10);
+            actx.fill();
+
+            // 边框
+            actx.strokeStyle = hexAlpha(fu.color, isHover ? 0.8 : 0.4);
+            actx.lineWidth = isHover ? 2 : 1.2;
+            actx.stroke();
+
+            // 悬停外发光
+            if (isHover) {
+                actx.shadowColor = fu.color;
+                actx.shadowBlur = 15;
+                actx.strokeStyle = hexAlpha(fu.color, 0.3);
+                actx.lineWidth = 3;
+                drawRoundRect(actx, r.x - 3, r.y - 3, r.w + 6, r.h + 6, 13);
+                actx.stroke();
+                actx.shadowBlur = 0;
+            }
+
+            // 名称
+            actx.fillStyle = fu.color;
+            actx.font = `bold ${Math.min(18, r.w * 0.2)}px "SF Pro Display", sans-serif`;
+            actx.textAlign = 'center';
+            actx.textBaseline = 'top';
+            actx.fillText(fu.label, r.x + r.w / 2, r.y + 8);
+
+            // 副标题
+            actx.fillStyle = hexAlpha(fu.color, 0.6);
+            actx.font = `${Math.min(10, r.w * 0.075)}px "SF Pro Display", sans-serif`;
+            const subLines = fu.sub.split('\n');
+            subLines.forEach((line, li) => {
+                actx.fillText(line, r.x + r.w / 2, r.y + 28 + li * 13);
+            });
+
+            // 分隔线
+            actx.strokeStyle = hexAlpha(fu.color, 0.15);
+            actx.lineWidth = 0.5;
+            actx.beginPath();
+            actx.moveTo(r.x + 8, r.y + 56);
+            actx.lineTo(r.x + r.w - 8, r.y + 56);
+            actx.stroke();
+
+            // 规格参数
+            actx.fillStyle = '#a8a29e';
+            actx.font = `${Math.min(9, r.w * 0.065)}px "SF Pro Display", sans-serif`;
+            const specLines = fu.spec.split('\n');
+            specLines.forEach((line, li) => {
+                actx.fillText(line, r.x + r.w / 2, r.y + 66 + li * 13);
+            });
+
+            // 利用率指示条
+            const utilY = r.y + r.h - 14;
+            const utilW = r.w - 16;
+            const utilX = r.x + 8;
+            const util = (i === 0) ? 0.6 : (i === 4) ? 0.75 : 0.95 + Math.sin(time * 0.002 + i) * 0.05;
+            // 背景条
+            actx.fillStyle = 'rgba(255,255,255,0.05)';
+            drawRoundRect(actx, utilX, utilY, utilW, 6, 3);
+            actx.fill();
+            // 利用率填充
+            const uGrad = actx.createLinearGradient(utilX, 0, utilX + utilW * util, 0);
+            uGrad.addColorStop(0, hexAlpha(fu.color, 0.6));
+            uGrad.addColorStop(1, hexAlpha(fu.color, 0.9));
+            actx.fillStyle = uGrad;
+            drawRoundRect(actx, utilX, utilY, utilW * util, 6, 3);
+            actx.fill();
+            // 利用率标签
+            actx.fillStyle = '#fafaf9';
+            actx.font = '8px "SF Pro Display", sans-serif';
+            actx.textAlign = 'right';
+            actx.fillText(Math.round(util * 100) + '%', r.x + r.w - 8, utilY + 11);
+        });
+
+        // === 4. SRAM 条 ===
+        const sramX = L.fuStartX;
+        const sramGrad = actx.createLinearGradient(sramX, L.sramY, sramX + L.sramW, L.sramY);
+        sramGrad.addColorStop(0, 'rgba(168,85,247,0.08)');
+        sramGrad.addColorStop(0.5, 'rgba(168,85,247,0.15)');
+        sramGrad.addColorStop(1, 'rgba(168,85,247,0.08)');
+        actx.fillStyle = sramGrad;
+        drawRoundRect(actx, sramX, L.sramY, L.sramW, L.sramH, 8);
+        actx.fill();
+        actx.strokeStyle = 'rgba(168,85,247,0.4)';
+        actx.lineWidth = 1.2;
+        actx.stroke();
+
+        actx.fillStyle = '#a855f7';
+        actx.font = 'bold 12px "SF Pro Display", sans-serif';
+        actx.textAlign = 'left';
+        actx.textBaseline = 'middle';
+        actx.fillText('Unified SRAM', sramX + 12, L.sramY + L.sramH / 2 - 1);
+
+        actx.fillStyle = '#a8a29e';
+        actx.font = '10px "SF Pro Display", sans-serif';
+        actx.fillText('230 MB', sramX + 120, L.sramY + L.sramH / 2 - 1);
+
+        actx.fillStyle = 'rgba(168,85,247,0.7)';
+        actx.font = 'bold 10px "SF Pro Display", sans-serif';
+        actx.textAlign = 'right';
+        actx.fillText('80 TB/s', sramX + L.sramW - 12, L.sramY + L.sramH / 2 - 1);
+
+        // FU 到 SRAM 的连接
+        for (let i = 0; i < L.fuCount; i++) {
+            const r = getFURect(i);
+            const cx = r.x + r.w / 2;
+            const isHighlight = (hoveredFU === i || selectedFU === i);
+            actx.strokeStyle = isHighlight ? 'rgba(168,85,247,0.5)' : 'rgba(168,85,247,0.15)';
+            actx.lineWidth = 1;
+            actx.beginPath();
+            actx.moveTo(cx, r.y + r.h);
+            actx.lineTo(cx, L.sramY);
+            actx.stroke();
+        }
+
+        // === 5. 数据流执行时间线 ===
+        if (L.pathH > 40) {
+            const timelineY = L.pathStartY;
+            const timelineH = L.pathH;
+
+            // 标题
+            actx.fillStyle = '#a8a29e';
+            actx.font = '11px "SF Pro Display", sans-serif';
+            actx.textAlign = 'left';
+            actx.textBaseline = 'top';
+            actx.fillText('Transformer Layer 执行映射示例 (编译期预编排)', L.pad.left + 4, timelineY);
+
+            const execY = timelineY + 20;
+            const execH = timelineH - 28;
+            const stageW = (archW - L.pad.left - L.pad.right) / 6;
+
+            // 执行阶段
+            const stages = [
+                { label: 'QKV 投影', fu: 'MXM+VXM', color: '#FF6B35', spans: [2, 1] },
+                { label: 'Attention\nScore', fu: 'MXM', color: '#00D4AA', spans: [2] },
+                { label: 'Softmax', fu: 'VXM', color: '#FFB800', spans: [1] },
+                { label: 'Attn Output', fu: 'MXM+VXM', color: '#FF6B35', spans: [2, 1] },
+                { label: 'FFN-1', fu: 'MXM', color: '#00D4AA', spans: [2] },
+                { label: 'FFN-2+Act', fu: 'MXM+VXM', color: '#FFB800', spans: [2, 1] }
+            ];
+
+            stages.forEach((stage, si) => {
+                const sx = L.pad.left + si * stageW + 2;
+                const sw = stageW - 4;
+
+                // 阶段背景
+                actx.fillStyle = hexAlpha(stage.color, 0.08);
+                drawRoundRect(actx, sx, execY, sw, execH, 6);
+                actx.fill();
+                actx.strokeStyle = hexAlpha(stage.color, 0.25);
+                actx.lineWidth = 1;
+                actx.stroke();
+
+                // 阶段名称
+                actx.fillStyle = stage.color;
+                actx.font = 'bold 10px "SF Pro Display", sans-serif';
+                actx.textAlign = 'center';
+                actx.textBaseline = 'top';
+                const nameLines = stage.label.split('\n');
+                nameLines.forEach((nl, ni) => {
+                    actx.fillText(nl, sx + sw / 2, execY + 6 + ni * 13);
+                });
+
+                // FU 使用指示
+                actx.fillStyle = '#78716c';
+                actx.font = '9px "SF Pro Display", sans-serif';
+                actx.fillText(stage.fu, sx + sw / 2, execY + 28 + (nameLines.length - 1) * 13);
+
+                // 时间槽标记（确定性调度）
+                const slotY = execY + execH - 20;
+                const slotH = 10;
+                const slotStartX = sx + 6;
+                const slotW = (sw - 12) / stage.spans.length;
+                stage.spans.forEach((fuIdx, fi) => {
+                    const fc = FU[fuIdx].color;
+                    actx.fillStyle = hexAlpha(fc, 0.4 + Math.sin(time * 0.004 + si + fi) * 0.15);
+                    drawRoundRect(actx, slotStartX + fi * (slotW + 2), slotY, slotW, slotH, 3);
+                    actx.fill();
+                    actx.fillStyle = '#fafaf9';
+                    actx.font = '7px "SF Pro Display", sans-serif';
+                    actx.fillText(FU[fuIdx].label, slotStartX + fi * (slotW + 2) + slotW / 2, slotY + slotH / 2 + 1);
+                });
+            });
+
+            // 时间轴箭头
+            const arrowY = execY + execH + 6;
+            actx.strokeStyle = 'rgba(255,107,53,0.4)';
+            actx.lineWidth = 1.5;
+            actx.beginPath();
+            actx.moveTo(L.pad.left + 4, arrowY);
+            actx.lineTo(archW - L.pad.right - 4, arrowY);
+            actx.stroke();
+            actx.fillStyle = 'rgba(255,107,53,0.5)';
+            actx.beginPath();
+            actx.moveTo(archW - L.pad.right - 4, arrowY);
+            actx.lineTo(archW - L.pad.right - 10, arrowY - 3);
+            actx.lineTo(archW - L.pad.right - 10, arrowY + 3);
+            actx.fill();
+            actx.fillStyle = '#a8a29e';
+            actx.font = '9px "SF Pro Display", sans-serif';
+            actx.textAlign = 'center';
+            actx.fillText('\u2190 确定性时钟周期 \u2192', archW / 2, arrowY + 12);
+
+            // === 6. 流动粒子 ===
+            flowParticles.forEach(p => {
+                p.t += p.speed;
+                if (p.t > 1) { p.reset(); p.t = 0; }
+
+                // 粒子在 FU 列之间流动
+                const fuIdx = p.pathIdx % L.fuCount;
+                const nextIdx = (fuIdx + 1) % L.fuCount;
+                const fc = getFUCenter(fuIdx);
+                const nc = getFUCenter(nextIdx);
+
+                let px, py;
+                if (p.pathType === 'weight') {
+                    // 权重从 SRAM 流向 MXM
+                    const memCenter = { x: sramX + L.sramW / 2, y: L.sramY + L.sramH / 2 };
+                    const target = getFUCenter(2); // MXM
+                    px = memCenter.x + (target.x - memCenter.x) * p.t;
+                    py = memCenter.y + (target.y - memCenter.y) * p.t - Math.sin(p.t * Math.PI) * 30;
+                } else if (p.pathType === 'activation') {
+                    // 激活值在 FU 之间流
+                    px = fc.x + (nc.x - fc.x) * p.t;
+                    py = fc.y + (nc.y - fc.y) * p.t + Math.sin(p.t * Math.PI * 2 + time * 0.003) * 8;
+                } else {
+                    // 中间结果
+                    px = fc.x + (nc.x - fc.x) * p.t;
+                    py = fc.y + (nc.y - fc.y) * p.t - Math.sin(p.t * Math.PI * 2 + time * 0.002) * 12;
+                }
+
+                p.trail.push({ x: px, y: py });
+                if (p.trail.length > p.maxTrail) p.trail.shift();
+
+                // 拖尾
+                for (let ti = 0; ti < p.trail.length; ti++) {
+                    const alpha = (ti / p.trail.length) * 0.35;
+                    const sz = p.size * (ti / p.trail.length);
+                    actx.beginPath();
+                    actx.arc(p.trail[ti].x, p.trail[ti].y, sz, 0, Math.PI * 2);
+                    actx.fillStyle = hexAlpha(p.getColor(), alpha);
+                    actx.fill();
+                }
+
+                // 主粒子
+                actx.beginPath();
+                actx.arc(px, py, p.size, 0, Math.PI * 2);
+                actx.fillStyle = p.getColor();
+                actx.fill();
+
+                // 光晕
+                actx.beginPath();
+                actx.arc(px, py, p.size * 2, 0, Math.PI * 2);
+                actx.fillStyle = hexAlpha(p.getColor(), 0.12);
+                actx.fill();
+            });
+        }
+
+        // === 7. "被消除的硬件结构"标注 ===
+        const elimItems = [
+            { label: 'No Cache', area: '~15%', power: '~25%' },
+            { label: 'No Branch Pred', area: '~5%', power: '~8%' },
+            { label: 'No OoO Exec', area: '~10%', power: '~15%' },
+            { label: 'No Reorder Buf', area: '~5%', power: '~5%' },
+            { label: 'No DRAM Ctrl', area: '~3%', power: '~10%' },
+        ];
+        const elimX = archW - L.pad.right - 135;
+        const elimY = L.fuStartY - 2;
+        const elimW = 130;
+        const elimH = elimItems.length * 22 + 10;
+
+        actx.fillStyle = 'rgba(239,68,68,0.06)';
+        drawRoundRect(actx, elimX, elimY - elimH / 2, elimW, elimH, 8);
+        actx.fill();
+        actx.strokeStyle = 'rgba(239,68,68,0.25)';
+        actx.lineWidth = 1;
+        actx.stroke();
+
+        // 标题
+        actx.fillStyle = '#ef4444';
+        actx.font = 'bold 9px "SF Pro Display", sans-serif';
+        actx.textAlign = 'center';
+        actx.textBaseline = 'top';
+        actx.fillText('Eliminated (saves ~38% area)', elimX + elimW / 2, elimY - elimH / 2 + 4);
+
+        elimItems.forEach((item, ei) => {
+            const iy = elimY - elimH / 2 + 18 + ei * 22;
+            actx.fillStyle = '#ef4444';
+            actx.font = '9px "SF Pro Display", sans-serif';
+            actx.textAlign = 'left';
+            actx.fillText('\u2717 ' + item.label, elimX + 8, iy);
+            actx.fillStyle = '#78716c';
+            actx.font = '8px "SF Pro Display", sans-serif';
+            actx.textAlign = 'right';
+            actx.fillText('area ' + item.area, elimX + elimW - 6, iy);
+        });
+
+        // === 8. PPA 关键指标标注 ===
+        const ppaItems = [
+            { label: 'Utilization', lpu: '95-100%', gpu: '50-60%' },
+            { label: 'Memory BW', lpu: '80 TB/s', gpu: '3.35 TB/s' },
+            { label: 'Latency', lpu: '1 cycle', gpu: '400+ cycles' },
+            { label: 'J/token', lpu: '1-3 J', gpu: '10-30 J' },
+        ];
+        const ppaX = archW - L.pad.right - 135;
+        const ppaY = L.sramY + L.sramH + 14;
+        const ppaW = 130;
+        const ppaH = ppaItems.length * 24 + 10;
+
+        actx.fillStyle = 'rgba(0,212,170,0.06)';
+        drawRoundRect(actx, ppaX, ppaY, ppaW, ppaH, 8);
+        actx.fill();
+        actx.strokeStyle = 'rgba(0,212,170,0.25)';
+        actx.lineWidth = 1;
+        actx.stroke();
+
+        actx.fillStyle = '#00D4AA';
+        actx.font = 'bold 9px "SF Pro Display", sans-serif';
+        actx.textAlign = 'center';
+        actx.textBaseline = 'top';
+        actx.fillText('PPA Advantage', ppaX + ppaW / 2, ppaY + 4);
+
+        ppaItems.forEach((item, pi) => {
+            const py = ppaY + 20 + pi * 24;
+            actx.fillStyle = '#a8a29e';
+            actx.font = '8px "SF Pro Display", sans-serif';
+            actx.textAlign = 'left';
+            actx.fillText(item.label, ppaX + 8, py);
+            actx.fillStyle = '#00D4AA';
+            actx.font = 'bold 8px "SF Pro Display", sans-serif';
+            actx.textAlign = 'center';
+            actx.fillText(item.lpu, ppaX + ppaW * 0.55, py);
+            actx.fillStyle = '#78716c';
+            actx.textAlign = 'right';
+            actx.fillText(item.gpu, ppaX + ppaW - 4, py);
+        });
+
+        requestAnimationFrame(drawArch);
+    }
+
+    // 鼠标悬停检测
+    archCanvas.addEventListener('mousemove', (e) => {
+        const rect = archCanvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        hoveredFU = -1;
+        for (let i = 0; i < FU.length; i++) {
+            const r = getFURect(i);
+            if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
+                hoveredFU = i;
+                break;
+            }
+        }
+        archCanvas.style.cursor = hoveredFU >= 0 ? 'pointer' : 'default';
+    });
+
+    archCanvas.addEventListener('mouseleave', () => { hoveredFU = -1; });
+
+    // 点击显示详情
+    archCanvas.addEventListener('click', (e) => {
+        const rect = archCanvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        for (let i = 0; i < FU.length; i++) {
+            const r = getFURect(i);
+            if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
+                selectedFU = selectedFU === i ? -1 : i;
+                showToast(`${FU[i].label}: ${FU[i].spec.split('\n')[0]}`, 'info');
+                break;
+            }
+        }
+    });
+
+    // 启动动画
+    requestAnimationFrame(drawArch);
+
+    // ==================== Section 1: 技术规格表 ====================
+    const specData = [
+        { param: '制程工艺', values: ['14nm', '4nm', '4nm HBM3e', '4nm', '5nm'], barValues: [14, 95, 95, 95, 80], color: 'orange', barClass: 'orange' },
+        { param: '芯片面积', values: ['~400mm²', '~800mm²', '814mm²', '~820mm²', '462.5mm²'], barValues: [49, 98, 99, 100, 56], color: 'blue', barClass: 'blue' },
+        { param: '晶体管数', values: ['~30B', '~100B+', '80B', '—', '4T (晶圆级)'], barValues: [8, 25, 20, 0, 100], color: 'teal', barClass: 'teal' },
+        { param: '片上存储', values: ['230MB SRAM', '—', '80GB HBM3', '95GB HBM2e', '40GB SRAM'], barValues: [100, 0, 35, 41, 17], color: 'orange', barClass: 'orange', note: '带宽维度' },
+        { param: '存储带宽', values: ['80 TB/s', '—', '3.35 TB/s', '4.8 TB/s', '20 PB/s'], barValues: [100, 0, 4, 6, 100], color: 'teal', barClass: 'teal' },
+        { param: '算力 (INT8)', values: ['750 TOPS', '—', '~2000 TOPS', '~460 TOPS', '—'], barValues: [38, 0, 100, 23, 0], color: 'purple', barClass: 'purple' },
+        { param: '功耗 (TDP)', values: ['~300W', '—', '700W', '400W', '~1000W'], barValues: [30, 0, 70, 40, 100], color: 'gray', barClass: 'gray', invert: true },
+        { param: '推理能效', values: ['~30 TOPS/W', '—', '~2.5 TOPS/W', '~1 TOPS/W', '—'], barValues: [100, 0, 8, 3, 0], color: 'orange', barClass: 'orange' },
+    ];
+
+    function buildSpecTable() {
+        const tbody = document.getElementById('specTableBody');
+        tbody.innerHTML = specData.map((row, ri) => `
+            <tr>
+                <td><strong>${row.param}</strong>${row.note ? `<br><span style="font-size:0.7rem;color:var(--text-secondary)">(${row.note})</span>` : ''}</td>
+                <td class="highlight-cell">${row.values[0]}</td>
+                <td>${row.values[1]}</td>
+                <td>${row.values[2]}</td>
+                <td>${row.values[3]}</td>
+                <td>${row.values[4]}</td>
+            </tr>
+        `).join('');
+    }
+    buildSpecTable();
+
+    let specBarsAnimated = false;
+    function animateSpecBars() {
+        if (specBarsAnimated) return;
+        specBarsAnimated = true;
+        // Add inline bars to each value cell
+        const rows = document.querySelectorAll('#specTableBody tr');
+        rows.forEach((row, ri) => {
+            const cells = row.querySelectorAll('td');
+            cells.forEach((cell, ci) => {
+                if (ci === 0) return;
+                const val = specData[ri].values[ci - 1];
+                if (val === '—') return;
+                const barPct = specData[ri].barValues[ci - 1];
+                const barClass = specData[ri].barClass;
+                const isHighlight = ci === 1;
+                cell.innerHTML = `
+                    <div class="bar-cell">
+                        <span style="min-width:80px;${isHighlight ? 'color:var(--accent-orange);font-weight:600' : ''}">${val}</span>
+                        <div class="bar-track">
+                            <div class="bar-fill ${barClass}" style="width:0" data-target="${barPct}"></div>
+                        </div>
+                    </div>
+                `;
+            });
+        });
+        // Animate bars
+        setTimeout(() => {
+            document.querySelectorAll('.bar-fill').forEach(bar => {
+                bar.style.width = bar.dataset.target + '%';
+            });
+        }, 100);
+    }
+
+    // ==================== Section 2: 性能基准柱状图 ====================
+    const benchCanvas = document.getElementById('benchCanvas');
+    const bctx = benchCanvas.getContext('2d');
+
+    function resizeBenchCanvas() {
+        const d = window.devicePixelRatio || 1;
+        const r = benchCanvas.getBoundingClientRect();
+        benchCanvas.width = r.width * d;
+        benchCanvas.height = r.height * d;
+        bctx.scale(d, d);
+    }
+    resizeBenchCanvas();
+    window.addEventListener('resize', resizeBenchCanvas);
+
+    const benchData = [
+        { model: 'Llama 3 8B', lpu: 420, h100: 95, a100: 52 },
+        { model: 'Llama 3 70B', lpu: 45, h100: 15, a100: 8 },
+        { model: 'Mixtral 8x7B', lpu: 95, h100: 18, a100: 9 },
+        { model: 'Gemma 2 9B', lpu: 380, h100: 88, a100: 48 },
+        { model: 'Llama 3.1 70B', lpu: 42, h100: 14, a100: 7 },
+    ];
+
+    let benchAnimProgress = 0;
+    let benchAnimStarted = false;
+
+    function drawBenchChart() {
+        const rect = benchCanvas.getBoundingClientRect();
+        const w = rect.width, h = rect.height;
+        bctx.clearRect(0, 0, w, h);
+
+        const padding = { top: 40, right: 30, bottom: 60, left: 70 };
+        const chartW = w - padding.left - padding.right;
+        const chartH = h - padding.top - padding.bottom;
+
+        const maxVal = 450;
+        const groupCount = benchData.length;
+        const barCount = 3;
+        const groupWidth = chartW / groupCount;
+        const barWidth = Math.min(groupWidth * 0.22, 36);
+        const groupGap = groupWidth - barCount * barWidth;
+
+        // Y 轴网格
+        bctx.strokeStyle = 'rgba(68,64,60,0.3)';
+        bctx.lineWidth = 1;
+        bctx.fillStyle = '#a8a29e';
+        bctx.font = '11px "SF Pro Display", sans-serif';
+        bctx.textAlign = 'right';
+        bctx.textBaseline = 'middle';
+        for (let v = 0; v <= maxVal; v += 100) {
+            const y = padding.top + chartH - (v / maxVal) * chartH;
+            bctx.beginPath();
+            bctx.moveTo(padding.left, y);
+            bctx.lineTo(w - padding.right, y);
+            bctx.stroke();
+            bctx.fillText(v.toString(), padding.left - 10, y);
+        }
+
+        // Y 轴标签
+        bctx.save();
+        bctx.translate(16, padding.top + chartH / 2);
+        bctx.rotate(-Math.PI / 2);
+        bctx.textAlign = 'center';
+        bctx.fillStyle = '#a8a29e';
+        bctx.font = '12px "SF Pro Display", sans-serif';
+        bctx.fillText('Tokens / sec', 0, 0);
+        bctx.restore();
+
+        const ease = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        const prog = ease(Math.min(benchAnimProgress, 1));
+
+        // 绘制柱状图
+        benchData.forEach((group, gi) => {
+            const gx = padding.left + gi * groupWidth + groupGap / 2;
+            const bars = [
+                { val: group.lpu, color: '#FF6B35', glow: 'rgba(255,107,53,0.3)' },
+                { val: group.h100, color: '#00D4AA', glow: 'rgba(0,212,170,0.3)' },
+                { val: group.a100, color: '#3B82F6', glow: 'rgba(59,130,246,0.3)' }
+            ];
+
+            bars.forEach((bar, bi) => {
+                const x = gx + bi * barWidth;
+                const barH = (bar.val / maxVal) * chartH * prog;
+                const y = padding.top + chartH - barH;
+
+                // 柱子阴影
+                bctx.fillStyle = bar.glow;
+                bctx.beginPath();
+                bctx.roundRect(x - 2, y - 2, barWidth + 4, barH + 4, 4);
+                bctx.fill();
+
+                // 柱子渐变
+                const grad = bctx.createLinearGradient(x, y, x, y + barH);
+                grad.addColorStop(0, bar.color);
+                grad.addColorStop(1, bar.color + '88');
+                bctx.fillStyle = grad;
+                bctx.beginPath();
+                bctx.roundRect(x, y, barWidth, barH, 4);
+                bctx.fill();
+
+                // 数值标签
+                if (prog > 0.8) {
+                    bctx.fillStyle = bar.color;
+                    bctx.font = 'bold 11px "SF Pro Display", sans-serif';
+                    bctx.textAlign = 'center';
+                    bctx.textBaseline = 'bottom';
+                    bctx.fillText(bar.val.toString(), x + barWidth / 2, y - 5);
+                }
+            });
+
+            // X 轴模型名称
+            bctx.fillStyle = '#a8a29e';
+            bctx.font = '11px "SF Pro Display", sans-serif';
+            bctx.textAlign = 'center';
+            bctx.textBaseline = 'top';
+            bctx.fillText(group.model, padding.left + gi * groupWidth + groupWidth / 2, padding.top + chartH + 12);
+        });
+
+        if (benchAnimStarted && benchAnimProgress < 1) {
+            benchAnimProgress += 0.025;
+            requestAnimationFrame(drawBenchChart);
+        }
+    }
+
+    function animateBenchChart() {
+        if (benchAnimStarted) return;
+        benchAnimStarted = true;
+        benchAnimProgress = 0;
+        drawBenchChart();
+    }
+
+    // ==================== Section 3: 部署形态 ====================
+    function selectTier(el) {
+        document.querySelectorAll('.topology-card').forEach(c => c.classList.remove('active'));
+        el.classList.add('active');
+        showToast(`已选择 ${el.querySelector('h3').textContent.trim()} 部署形态`, 'info');
+    }
+
+    // 缩放计算器
+    const chipScaling = {
+        7: { chips: 1, tier: 'GroqCloud API', tierClass: 'cloud' },
+        13: { chips: 8, tier: 'GroqCloud API', tierClass: 'cloud' },
+        34: { chips: 72, tier: 'GroqPod', tierClass: 'pod' },
+        70: { chips: 576, tier: 'GroqPod', tierClass: 'pod' },
+        405: { chips: 2880, tier: 'GroqRack', tierClass: 'rack' }
+    };
+
+    let selectedParams = 70;
+    let selectedPrec = 16;
+
+    function updateCalculator() {
+        const base = chipScaling[selectedParams];
+        if (!base) return;
+        const precDivisor = { 16: 1, 8: 2, 4: 4 };
+        const chips = Math.max(1, Math.ceil(base.chips / precDivisor[selectedPrec]));
+        const pods = Math.ceil(chips / 576);
+        const tier = pods <= 1 ? (chips <= 8 ? 'GroqCloud API' : 'GroqPod') : 'GroqRack';
+        const throughput = Math.round(selectedParams === 7 ? 420 / precDivisor[selectedPrec] * 0.8 : selectedParams === 70 ? 45 / precDivisor[selectedPrec] * 0.8 : selectedParams === 405 ? 5 / precDivisor[selectedPrec] * 0.8 : 100 / precDivisor[selectedPrec] * 0.8);
+
+        document.getElementById('calcResult').innerHTML = `
+            <div class="calc-result-row">
+                <span class="calc-result-label">模型参数</span>
+                <span class="calc-result-value">${selectedParams}B</span>
+            </div>
+            <div class="calc-result-row">
+                <span class="calc-result-label">量化精度</span>
+                <span class="calc-result-value">${selectedPrec === 16 ? 'FP16' : 'INT' + selectedPrec}</span>
+            </div>
+            <div class="calc-result-row">
+                <span class="calc-result-label">所需 LPU 芯片</span>
+                <span class="calc-result-value chips">${chips.toLocaleString()}</span>
+            </div>
+            <div class="calc-result-row">
+                <span class="calc-result-label">所需 GroqPod</span>
+                <span class="calc-result-value">${pods}</span>
+            </div>
+            <div class="calc-result-row">
+                <span class="calc-result-label">推荐部署形态</span>
+                <span class="calc-result-value deploy">${tier}</span>
+            </div>
+            <div class="calc-result-row">
+                <span class="calc-result-label">预估吞吐 (tok/s)</span>
+                <span class="calc-result-value">${throughput.toLocaleString()}</span>
+            </div>
+        `;
+    }
+
+    document.getElementById('modelButtons').addEventListener('click', (e) => {
+        const btn = e.target.closest('.calc-btn');
+        if (!btn) return;
+        document.querySelectorAll('#modelButtons .calc-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selectedParams = parseInt(btn.dataset.params);
+        updateCalculator();
+    });
+
+    document.getElementById('precisionButtons').addEventListener('click', (e) => {
+        const btn = e.target.closest('.calc-btn');
+        if (!btn) return;
+        document.querySelectorAll('#precisionButtons .calc-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selectedPrec = parseInt(btn.dataset.prec);
+        updateCalculator();
+    });
+
+    updateCalculator();
+
+    // ==================== Section 4: 竞争雷达图 ====================
+    const radarCanvas = document.getElementById('radarCanvas');
+    const rctx = radarCanvas.getContext('2d');
+
+    function resizeRadarCanvas() {
+        const d = window.devicePixelRatio || 1;
+        const r = radarCanvas.getBoundingClientRect();
+        radarCanvas.width = r.width * d;
+        radarCanvas.height = r.height * d;
+        rctx.scale(d, d);
+    }
+    resizeRadarCanvas();
+    window.addEventListener('resize', () => { resizeRadarCanvas(); drawRadar(); });
+
+    const radarDims = ['确定性执行', '存储带宽', 'Token 吞吐', '通用性', '可扩展性', '生态成熟度'];
+
+    const competitors = {
+        groq:     { label: 'Groq LPU',   values: [98, 95, 92, 20, 55, 35], color: '#FF6B35' },
+        nvidia:   { label: 'NVIDIA H100', values: [35, 30, 40, 95, 90, 98], color: '#10b981' },
+        google:   { label: 'Google TPU',  values: [70, 40, 55, 60, 80, 75], color: '#3B82F6' },
+        cerebras: { label: 'Cerebras',    values: [65, 80, 50, 40, 45, 25], color: '#a855f7' },
+        sambanova:{ label: 'SambaNova',   values: [60, 50, 55, 45, 60, 30], color: '#FFB800' }
+    };
+
+    let compVisibility = { groq: true, nvidia: true, google: true, cerebras: true, sambanova: true };
+    let radarAnimProgress = 0;
+    let radarAnimStarted = false;
+
+    function drawRadar() {
+        const rect = radarCanvas.getBoundingClientRect();
+        const w = rect.width, h = rect.height;
+        rctx.clearRect(0, 0, w, h);
+
+        const cx = w / 2, cy = h / 2;
+        const radius = Math.min(cx, cy) - 60;
+        const dimCount = radarDims.length;
+
+        const ease = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        const prog = ease(Math.min(radarAnimProgress, 1));
+
+        // 绘制网格
+        for (let ring = 1; ring <= 5; ring++) {
+            const r = (radius / 5) * ring;
+            rctx.strokeStyle = `rgba(68,64,60,${ring === 5 ? 0.5 : 0.25})`;
+            rctx.lineWidth = 1;
+            rctx.beginPath();
+            for (let i = 0; i <= dimCount; i++) {
+                const angle = (i * 2 * Math.PI / dimCount) - Math.PI / 2;
+                const x = cx + r * Math.cos(angle);
+                const y = cy + r * Math.sin(angle);
+                i === 0 ? rctx.moveTo(x, y) : rctx.lineTo(x, y);
+            }
+            rctx.closePath();
+            rctx.stroke();
+        }
+
+        // 轴线 + 标签
+        for (let i = 0; i < dimCount; i++) {
+            const angle = (i * 2 * Math.PI / dimCount) - Math.PI / 2;
+            rctx.strokeStyle = 'rgba(68,64,60,0.3)';
+            rctx.beginPath();
+            rctx.moveTo(cx, cy);
+            rctx.lineTo(cx + radius * Math.cos(angle), cy + radius * Math.sin(angle));
+            rctx.stroke();
+
+            const lx = cx + (radius + 28) * Math.cos(angle);
+            const ly = cy + (radius + 28) * Math.sin(angle);
+            rctx.fillStyle = '#a8a29e';
+            rctx.font = '12px "SF Pro Display", sans-serif';
+            rctx.textAlign = 'center';
+            rctx.textBaseline = 'middle';
+            rctx.fillText(radarDims[i], lx, ly);
+        }
+
+        // 绘制各竞争者
+        Object.entries(competitors).forEach(([key, comp]) => {
+            if (!compVisibility[key]) return;
+            rctx.beginPath();
+            for (let i = 0; i <= dimCount; i++) {
+                const idx = i % dimCount;
+                const angle = (idx * 2 * Math.PI / dimCount) - Math.PI / 2;
+                const val = comp.values[idx] / 100 * prog;
+                const x = cx + radius * val * Math.cos(angle);
+                const y = cy + radius * val * Math.sin(angle);
+                i === 0 ? rctx.moveTo(x, y) : rctx.lineTo(x, y);
+            }
+            rctx.closePath();
+            rctx.fillStyle = comp.color + '18';
+            rctx.fill();
+            rctx.strokeStyle = comp.color + '99';
+            rctx.lineWidth = 2;
+            rctx.stroke();
+
+            // 顶点圆点
+            for (let i = 0; i < dimCount; i++) {
+                const angle = (i * 2 * Math.PI / dimCount) - Math.PI / 2;
+                const val = comp.values[i] / 100 * prog;
+                const x = cx + radius * val * Math.cos(angle);
+                const y = cy + radius * val * Math.sin(angle);
+                rctx.beginPath();
+                rctx.arc(x, y, 3, 0, Math.PI * 2);
+                rctx.fillStyle = comp.color;
+                rctx.fill();
+            }
+        });
+
+        // 图例
+        let legendX = 16, legendY = 16;
+        Object.entries(competitors).forEach(([key, comp]) => {
+            if (!compVisibility[key]) return;
+            rctx.fillStyle = comp.color;
+            rctx.beginPath();
+            rctx.arc(legendX + 5, legendY + 5, 4, 0, Math.PI * 2);
+            rctx.fill();
+            rctx.fillStyle = '#a8a29e';
+            rctx.font = '11px "SF Pro Display", sans-serif';
+            rctx.textAlign = 'left';
+            rctx.fillText(comp.label, legendX + 14, legendY + 9);
+            legendY += 20;
+        });
+    }
+
+    function animateRadarChart() {
+        if (radarAnimStarted) return;
+        radarAnimStarted = true;
+        radarAnimProgress = 0;
+        function step() {
+            radarAnimProgress += 0.02;
+            drawRadar();
+            if (radarAnimProgress < 1) requestAnimationFrame(step);
+        }
+        step();
+    }
+
+    // 竞争者切换
+    document.getElementById('compToggles').addEventListener('click', (e) => {
+        const btn = e.target.closest('.comp-toggle');
+        if (!btn) return;
+        const comp = btn.dataset.comp;
+        compVisibility[comp] = !compVisibility[comp];
+        btn.classList.toggle('active', compVisibility[comp]);
+        drawRadar();
+    });
+
+    // ==================== Section 5: 洞察卡片 ====================
+    function toggleInsight(card) {
+        card.classList.toggle('open');
+    }
+
+    // ==================== 初始化 ====================
+    // 首屏立即可见
+    document.getElementById('section-0').classList.add('visible');
+    drawRadar();
+    </script>
+</body>
+</html>

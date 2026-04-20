@@ -1,0 +1,1571 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic AI CPU 设计空间可视化</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: #1f2937;
+            --accent-cyan: #00d4ff;
+            --accent-purple: #a855f7;
+            --accent-green: #10b981;
+            --accent-orange: #f59e0b;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
+            --border-color: #374151;
+        }
+
+        body {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        /* 背景网格效果 */
+        .grid-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image:
+                linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* 光晕效果 */
+        .glow-orb {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(100px);
+            opacity: 0.3;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .glow-orb-1 {
+            width: 400px;
+            height: 400px;
+            background: var(--accent-cyan);
+            top: -100px;
+            right: -100px;
+        }
+
+        .glow-orb-2 {
+            width: 300px;
+            height: 300px;
+            background: var(--accent-purple);
+            bottom: -50px;
+            left: -50px;
+        }
+
+        /* 顶部导航 */
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            background: rgba(10, 14, 26, 0.9);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 2rem;
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .level-indicator {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .level-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--border-color);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .level-dot.active {
+            background: var(--accent-cyan);
+            box-shadow: 0 0 20px var(--accent-cyan);
+        }
+
+        .level-dot.completed {
+            background: var(--accent-green);
+        }
+
+        .level-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-left: 0.5rem;
+        }
+
+        /* 侧边导航 */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            padding: 1rem;
+        }
+
+        .nav-item {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .nav-item:hover {
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.2);
+        }
+
+        .nav-item.active {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(168, 85, 247, 0.2));
+            border-color: var(--accent-cyan);
+        }
+
+        .nav-item .icon {
+            font-size: 1.2rem;
+        }
+
+        .nav-item .label {
+            font-size: 0.5rem;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .nav-tooltip {
+            position: absolute;
+            left: 60px;
+            background: var(--bg-card);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+            border: 1px solid var(--border-color);
+        }
+
+        .nav-item:hover .nav-tooltip {
+            opacity: 1;
+        }
+
+        /* 主内容区 */
+        .main-container {
+            margin-left: 80px;
+            padding: 100px 2rem 2rem;
+            max-width: 1400px;
+            margin-right: auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* 层级容器 */
+        .level-container {
+            display: none;
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.5s ease;
+        }
+
+        .level-container.active {
+            display: block;
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* 标题区 */
+        .level-header {
+            margin-bottom: 3rem;
+        }
+
+        .level-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(168, 85, 247, 0.2));
+            border: 1px solid var(--accent-cyan);
+            border-radius: 20px;
+            font-size: 0.75rem;
+            color: var(--accent-cyan);
+            margin-bottom: 1rem;
+        }
+
+        .level-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--text-primary), var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .level-subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        /* 设计空间网格 */
+        .design-space-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+
+        /* 设计空间卡片 */
+        .design-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .design-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
+        }
+
+        .design-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .design-card:hover {
+            border-color: var(--accent-cyan);
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .design-card.expandable::after {
+            content: '→';
+            position: absolute;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            font-size: 1.2rem;
+            color: var(--accent-cyan);
+            transition: transform 0.3s ease;
+        }
+
+        .design-card.expandable:hover::after {
+            transform: translateX(5px);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(168, 85, 247, 0.2));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .card-content {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+
+        /* 选项列表 */
+        .options-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .option-tag {
+            padding: 0.25rem 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            transition: all 0.2s ease;
+        }
+
+        .option-tag:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        .option-tag.primary {
+            background: rgba(0, 212, 255, 0.1);
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        /* 详细面板 */
+        .detail-panel {
+            display: none;
+            margin-top: 1rem;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .detail-panel.active {
+            display: block;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .detail-value {
+            font-weight: 600;
+            color: var(--accent-cyan);
+        }
+
+        /* 对比表格 */
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 2rem 0;
+            background: var(--bg-card);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .comparison-table th {
+            background: var(--bg-secondary);
+            font-weight: 600;
+            color: var(--accent-cyan);
+        }
+
+        .comparison-table tr:hover td {
+            background: var(--bg-secondary);
+        }
+
+        .comparison-table td {
+            color: var(--text-secondary);
+        }
+
+        /* 架构图 */
+        .architecture-diagram {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 2rem;
+            padding: 2rem;
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+
+        .arch-box {
+            padding: 1.5rem 2rem;
+            background: var(--bg-card);
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            text-align: center;
+            min-width: 150px;
+            transition: all 0.3s ease;
+        }
+
+        .arch-box:hover {
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 30px rgba(0, 212, 255, 0.2);
+        }
+
+        .arch-box.highlight {
+            border-color: var(--accent-cyan);
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(168, 85, 247, 0.1));
+        }
+
+        .arch-icon {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .arch-label {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .arch-desc {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .arch-arrow {
+            font-size: 2rem;
+            color: var(--accent-cyan);
+        }
+
+        /* 下层按钮 */
+        .drill-down-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            border: none;
+            border-radius: 10px;
+            color: var(--bg-primary);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+
+        .drill-down-btn:hover {
+            transform: translateX(10px);
+            box-shadow: 0 10px 30px rgba(0, 212, 255, 0.3);
+        }
+
+        /* 范围滑块 */
+        .range-control {
+            margin: 2rem 0;
+        }
+
+        .range-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .range-label {
+            font-weight: 600;
+        }
+
+        .range-value {
+            color: var(--accent-cyan);
+            font-weight: 700;
+        }
+
+        .range-slider {
+            width: 100%;
+            height: 8px;
+            border-radius: 4px;
+            background: var(--bg-secondary);
+            appearance: none;
+            outline: none;
+        }
+
+        .range-slider::-webkit-slider-thumb {
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--accent-cyan);
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--accent-cyan);
+        }
+
+        .range-slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--accent-cyan);
+            cursor: pointer;
+            border: none;
+        }
+
+        .range-marks {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 0.5rem;
+        }
+
+        .range-mark {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .sidebar {
+                display: none;
+            }
+
+            .main-container {
+                margin-left: 0;
+            }
+
+            .level-title {
+                font-size: 1.75rem;
+            }
+
+            .design-space-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .architecture-diagram {
+                flex-direction: column;
+            }
+
+            .arch-arrow {
+                transform: rotate(90deg);
+            }
+        }
+
+        /* 动画效果 */
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes float {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-10px);
+            }
+        }
+
+        .float {
+            animation: float 3s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body>
+    <div class="grid-bg"></div>
+    <div class="glow-orb glow-orb-1"></div>
+    <div class="glow-orb glow-orb-2"></div>
+
+    <!-- 顶部导航 -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">Agentic AI CPU 设计空间</div>
+            <div class="level-indicator">
+                <div class="level-dot active" data-level="0"></div>
+                <div class="level-label">系统</div>
+                <div class="level-dot" data-level="1"></div>
+                <div class="level-label">SoC</div>
+                <div class="level-dot" data-level="2"></div>
+                <div class="level-label">CPU</div>
+                <div class="level-dot" data-level="3"></div>
+                <div class="level-label">软硬协同</div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 侧边导航 -->
+    <nav class="sidebar">
+        <div class="nav-item active" data-level="0">
+            <div class="icon">🖥️</div>
+            <div class="label">系统</div>
+            <div class="nav-tooltip">系统维度</div>
+        </div>
+        <div class="nav-item" data-level="1">
+            <div class="icon">⚡</div>
+            <div class="label">SoC</div>
+            <div class="nav-tooltip">SoC维度</div>
+        </div>
+        <div class="nav-item" data-level="2">
+            <div class="icon">🔧</div>
+            <div class="label">CPU</div>
+            <div class="nav-tooltip">CPU维度</div>
+        </div>
+        <div class="nav-item" data-level="3">
+            <div class="icon">🤝</div>
+            <div class="label">协同</div>
+            <div class="nav-tooltip">软硬件协同</div>
+        </div>
+    </nav>
+
+    <!-- 主内容区 -->
+    <main class="main-container">
+        <!-- 第一层：系统维度 -->
+        <div class="level-container active" id="level-0">
+            <div class="level-header">
+                <span class="level-badge">Level 1</span>
+                <h1 class="level-title">系统维度设计空间</h1>
+                <p class="level-subtitle">从机架级和多节点架构视角探索Agentic AI的系统级设计选择</p>
+            </div>
+
+            <div class="design-space-grid">
+                <!-- CPU-GPU配比 -->
+                <div class="design-card">
+                    <div class="card-header">
+                        <div class="card-icon">⚖️</div>
+                        <div class="card-title">CPU-GPU配比模式</div>
+                    </div>
+                    <div class="card-content">
+                        决定CPU与GPU的数量比例，影响训练/推理效率和资源利用率
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag primary">GPU为主型 (1:2-4)</span>
+                        <span class="option-tag">均衡型 (1:1)</span>
+                        <span class="option-tag">CPU独立机柜</span>
+                    </div>
+                </div>
+
+                <!-- 机架级优化 -->
+                <div class="design-card">
+                    <div class="card-header">
+                        <div class="card-icon">🗄️</div>
+                        <div class="card-title">机架级部署策略</div>
+                    </div>
+                    <div class="card-content">
+                        优化功率密度、散热和互联的机架级架构设计
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">高密度风冷 (36kW)</span>
+                        <span class="option-tag">液冷机柜</span>
+                        <span class="option-tag">混合部署</span>
+                    </div>
+                </div>
+
+                <!-- 分层架构 -->
+                <div class="design-card">
+                    <div class="card-header">
+                        <div class="card-icon">🏗️</div>
+                        <div class="card-title">分层系统架构</div>
+                    </div>
+                    <div class="card-content">
+                        将工作负载分配到不同层级的前端/中端/后端系统
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">前端调度层</span>
+                        <span class="option-tag">中端推理层</span>
+                        <span class="option-tag">后端训练层</span>
+                    </div>
+                </div>
+
+                <!-- 独立CPU机柜 -->
+                <div class="design-card">
+                    <div class="card-header">
+                        <div class="card-icon">🏢</div>
+                        <div class="card-title">CPU专用机柜</div>
+                    </div>
+                    <div class="card-content">
+                        为CPU密集型工作负载（如RL/Agent推理）设计的独立CPU机柜
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">256-CPU机柜</span>
+                        <span class="option-tag">22,500+并发环境</span>
+                        <span class="option-tag">低延迟互联</span>
+                    </div>
+                </div>
+
+                <!-- 互联拓扑 -->
+                <div class="design-card">
+                    <div class="card-header">
+                        <div class="card-icon">🔗</div>
+                        <div class="card-title">节点间互联拓扑</div>
+                    </div>
+                    <div class="card-content">
+                        决定多节点间的通信带宽和延迟特征
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">NVLink域</span>
+                        <span class="option-tag">InfiniBand</span>
+                        <span class="option-tag">以太网+RDMA</span>
+                    </div>
+                </div>
+
+                <!-- 内存架构 -->
+                <div class="design-card">
+                    <div class="card-header">
+                        <div class="card-icon">💾</div>
+                        <div class="card-title">系统级内存架构</div>
+                    </div>
+                    <div class="card-content">
+                        内存池化、分解式内存和CXL支持的内存扩展
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">CXL 3.0内存池</span>
+                        <span class="option-tag">分解式内存</span>
+                        <span class="option-tag">本地内存</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 系统架构图 -->
+            <div class="architecture-diagram">
+                <div class="arch-box">
+                    <div class="arch-icon">🌐</div>
+                    <div class="arch-label">前端调度</div>
+                    <div class="arch-desc">请求路由/负载均衡</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-box highlight">
+                    <div class="arch-icon">🧠</div>
+                    <div class="arch-label">中端推理</div>
+                    <div class="arch-desc">Agent决策/模型推理</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-box">
+                    <div class="arch-icon">💪</div>
+                    <div class="arch-label">后端训练</div>
+                    <div class="arch-desc">模型微调/RLHF</div>
+                </div>
+            </div>
+
+            <button class="drill-down-btn" onclick="navigateToLevel(1)">
+                深入SoC维度 →
+            </button>
+        </div>
+
+        <!-- 第二层：SoC维度 -->
+        <div class="level-container" id="level-1">
+            <div class="level-header">
+                <span class="level-badge">Level 2</span>
+                <h1 class="level-title">SoC维度设计空间</h1>
+                <p class="level-subtitle">探索芯片级架构设计，包括核心选择、缓存层次、互联和内存子系统</p>
+            </div>
+
+            <div class="design-space-grid">
+                <!-- 核心架构 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🔬</div>
+                        <div class="card-title">核心架构选择</div>
+                    </div>
+                    <div class="card-content">
+                        选择自研核心还是公版核心，平衡性能、功耗和上市时间
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">自研核心</span>
+                        <span class="option-tag">公版核心</span>
+                        <span class="option-tag">混合架构</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">解码宽度</span>
+                            <span class="detail-value">6-wide ~ 10-wide</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">IPC目标</span>
+                            <span class="detail-value">1x ~ 1.5x</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">分支预测</span>
+                            <span class="detail-value">传统 / 神经预测器</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 缓存层次 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">📚</div>
+                        <div class="card-title">缓存层次结构</div>
+                    </div>
+                    <div class="card-content">
+                        设计L1/L2/L3缓存的大小、拓扑和一致性协议
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">统一L3缓存</span>
+                        <span class="option-tag">分布式缓存</span>
+                        <span class="option-tag">NUMA感知</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">L2缓存/核</span>
+                            <span class="detail-value">1MB ~ 2MB</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">L3缓存总量</span>
+                            <span class="detail-value">128MB ~ 162MB</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">内存延迟</span>
+                            <span class="detail-value">&lt;100ns</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 片内互联 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🔌</div>
+                        <div class="card-title">片内互联架构</div>
+                    </div>
+                    <div class="card-content">
+                        连接所有核心、缓存和内存子系统的片上网络
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">Mesh拓扑</span>
+                        <span class="option-tag">Ring拓扑</span>
+                        <span class="option-tag">自定义NoC</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">分切带宽</span>
+                            <span class="detail-value">3.4 TB/s</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">每核带宽</span>
+                            <span class="detail-value">14 GB/s</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">拓扑一致性</span>
+                            <span class="detail-value">单片 / Chiplet</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 内存子系统 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">💾</div>
+                        <div class="card-title">内存子系统</div>
+                    </div>
+                    <div class="card-content">
+                        内存类型、容量、带宽和可扩展性的权衡
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">LPDDR5X</span>
+                        <span class="option-tag">DDR5</span>
+                        <span class="option-tag">SOCAMM</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">总带宽</span>
+                            <span class="detail-value">500GB/s ~ 1.2TB/s</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">最大容量</span>
+                            <span class="detail-value">480GB ~ 1.5TB</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">每核带宽</span>
+                            <span class="detail-value">6GB/s ~ 14GB/s</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- I/O扩展 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🚪</div>
+                        <div class="card-title">I/O与扩展接口</div>
+                    </div>
+                    <div class="card-content">
+                        PCIe通道数、CXL支持和加速器连接能力
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">PCIe Gen6</span>
+                        <span class="option-tag">CXL 3.0</span>
+                        <span class="option-tag">NVLink-C2C</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">PCIe通道</span>
+                            <span class="detail-value">96 ~ 128 lanes</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">NVLink带宽</span>
+                            <span class="detail-value">900GB/s ~ 1.8TB/s</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">CXL支持</span>
+                            <span class="detail-value">Type 3 内存扩展</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Die架构 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🔲</div>
+                        <div class="card-title">Die架构策略</div>
+                    </div>
+                    <div class="card-content">
+                        单片vs Chiplet设计，影响性能一致性、成本和可扩展性
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">单片Monolithic</span>
+                        <span class="option-tag">Chiplet</span>
+                        <span class="option-tag">混合架构</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">性能一致性</span>
+                            <span class="detail-value">单片更优</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">扩展灵活性</span>
+                            <span class="detail-value">Chiplet更优</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">NUMA边界</span>
+                            <span class="detail-value">单片消除</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SoC架构对比图 -->
+            <div class="architecture-diagram">
+                <div class="arch-box">
+                    <div class="arch-icon">📦</div>
+                    <div class="arch-label">单片架构</div>
+                    <div class="arch-desc">统一拓扑<br>低延迟<br>高性能</div>
+                </div>
+                <div class="arch-box" style="border-style: dashed;">
+                    <div class="arch-icon">🔄</div>
+                    <div class="arch-label">VS</div>
+                </div>
+                <div class="arch-box">
+                    <div class="arch-icon">🧩</div>
+                    <div class="arch-label">Chiplet</div>
+                    <div class="arch-desc">灵活扩展<br>成本优化<br>跨die延迟</div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 1rem;">
+                <button class="drill-down-btn" onclick="navigateToLevel(2)">
+                    深入CPU维度 →
+                </button>
+                <button class="drill-down-btn" onclick="navigateToLevel(0)" style="background: var(--bg-card);">
+                    ← 返回系统维度
+                </button>
+            </div>
+        </div>
+
+        <!-- 第三层：CPU维度 -->
+        <div class="level-container" id="level-2">
+            <div class="level-header">
+                <span class="level-badge">Level 3</span>
+                <h1 class="level-title">CPU维度设计空间</h1>
+                <p class="level-subtitle">深入CPU核心微架构，探索多线程、指令集、分支预测和专用加速器</p>
+            </div>
+
+            <div class="design-space-grid">
+                <!-- 多线程策略 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🧵</div>
+                        <div class="card-title">多线程策略</div>
+                    </div>
+                    <div class="card-content">
+                        在单核性能和并发密度之间找到平衡
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">无SMT</span>
+                        <span class="option-tag">传统SMT</span>
+                        <span class="option-tag primary">空间多线程</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">无SMT</span>
+                            <span class="detail-value">最佳单线程性能</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">传统SMT</span>
+                            <span class="detail-value">时间切片，性能不稳定</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">空间多线程</span>
+                            <span class="detail-value">物理隔离，可预测延迟</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 指令集扩展 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">📝</div>
+                        <div class="card-title">AI指令集扩展</div>
+                    </div>
+                    <div class="card-content">
+                        针对AI工作负载的专用指令支持
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag primary">FP8原生支持</span>
+                        <span class="option-tag">BF16/INT8</span>
+                        <span class="option-tag">SVE-2</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">FP8</span>
+                            <span class="detail-value">最低精度，最高吞吐</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">BF16</span>
+                            <span class="detail-value">平衡精度与性能</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">INT8</span>
+                            <span class="detail-value">整数推理加速</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分支预测 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🔮</div>
+                        <div class="card-title">分支预测器</div>
+                    </div>
+                    <div class="card-content">
+                        针对Python/PyTorch等分支密集型代码的优化
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">传统静态预测</span>
+                        <span class="option-tag">动态预测器</span>
+                        <span class="option-tag primary">神经预测器</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">静态预测</span>
+                            <span class="detail-value">编译时决定</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">动态预测</span>
+                            <span class="detail-value">运行时学习模式</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">神经预测</span>
+                            <span class="detail-value">ML辅助，双分支预测</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 前端宽度 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">📏</div>
+                        <div class="card-title">指令前端宽度</div>
+                    </div>
+                    <div class="card-content">
+                        取指和解码宽度，影响ILP和功耗
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">6-wide</span>
+                        <span class="option-tag">8-wide</span>
+                        <span class="option-tag primary">10-wide</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">6-wide</span>
+                            <span class="detail-value">能效优先</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">8-wide</span>
+                            <span class="detail-value">平衡选择</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">10-wide</span>
+                            <span class="detail-value">极致性能</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 专用加速器 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🚀</div>
+                        <div class="card-title">片上专用加速器</div>
+                    </div>
+                    <div class="card-content">
+                        为特定任务设计的硬件加速单元
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">网络引擎</span>
+                        <span class="option-tag">安全TEE</span>
+                        <span class="option-tag">压缩引擎</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">RDMA引擎</span>
+                            <span class="detail-value">绕过CPU NoC</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">加密引擎</span>
+                            <span class="detail-value">低开销安全</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">调度加速</span>
+                            <span class="detail-value">Kernel launch优化</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 频率策略 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">⚡</div>
+                        <div class="card-title">频率与功耗策略</div>
+                    </div>
+                    <div class="card-content">
+                        基准频率、加速频率和功耗封顶的权衡
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">能效优先</span>
+                        <span class="option-tag">性能优先</span>
+                        <span class="option-tag">动态调频</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">基准频率</span>
+                            <span class="detail-value">2.5GHz ~ 3.2GHz</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">加速频率</span>
+                            <span class="detail-value">最高+500MHz</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">TDP</span>
+                            <span class="detail-value">300W ~ 500W</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 多线程对比 -->
+            <div class="architecture-diagram">
+                <div class="arch-box">
+                    <div class="arch-icon">⏱️</div>
+                    <div class="arch-label">传统SMT</div>
+                    <div class="arch-desc">时间切片<br>性能抖动<br>共享资源</div>
+                </div>
+                <div class="arch-box" style="border-style: dashed;">
+                    <div class="arch-icon">🔄</div>
+                    <div class="arch-label">VS</div>
+                </div>
+                <div class="arch-box highlight">
+                    <div class="arch-icon">🏗️</div>
+                    <div class="arch-label">空间多线程</div>
+                    <div class="arch-desc">物理隔离<br>可预测延迟<br>独立资源</div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 1rem;">
+                <button class="drill-down-btn" onclick="navigateToLevel(3)">
+                    深入软硬协同 →
+                </button>
+                <button class="drill-down-btn" onclick="navigateToLevel(1)" style="background: var(--bg-card);">
+                    ← 返回SoC维度
+                </button>
+            </div>
+        </div>
+
+        <!-- 第四层：软硬件协同维度 -->
+        <div class="level-container" id="level-3">
+            <div class="level-header">
+                <span class="level-badge">Level 4</span>
+                <h1 class="level-title">软硬件协同设计空间</h1>
+                <p class="level-subtitle">探索软硬件协同优化，从瓶颈识别到调度策略再到生态兼容</p>
+            </div>
+
+            <div class="design-space-grid">
+                <!-- CPU端瓶颈 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🔍</div>
+                        <div class="card-title">CPU端瓶颈识别</div>
+                    </div>
+                    <div class="card-content">
+                        识别并量化AI工作负载中CPU端的性能瓶颈
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag primary">Kernel Launch</span>
+                        <span class="option-tag">Python开销</span>
+                        <span class="option-tag">PyTorch Dispatch</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">阿姆达尔定律</span>
+                            <span class="detail-value">串行部分限制加速</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">DeepSeek优化</span>
+                            <span class="detail-value">73%收益来自CPU</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">GPU空转</span>
+                            <span class="detail-value">等待CPU启动kernel</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- NUMA调度 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🗺️</div>
+                        <div class="card-title">NUMA感知调度</div>
+                    </div>
+                    <div class="card-content">
+                        优化进程-CPU-GPU的拓扑匹配，减少跨NUMA通信
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">自动拓扑感知</span>
+                        <span class="option-tag">进程绑定工具</span>
+                        <span class="option-tag">亲和性调度</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">本地GPU</span>
+                            <span class="detail-value">最佳延迟</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">跨C2C</span>
+                            <span class="detail-value">+2x延迟</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">工具支持</span>
+                            <span class="detail-value">bindpcie等</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 软件栈优化 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🔧</div>
+                        <div class="card-title">软件栈协同优化</div>
+                    </div>
+                    <div class="card-content">
+                        从应用到驱动的多层次优化策略
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">JIT编译</span>
+                        <span class="option-tag">批处理</span>
+                        <span class="option-tag">流水线</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">应用层</span>
+                            <span class="detail-value">Python调度优化</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">框架层</span>
+                            <span class="detail-value">Dispatch开销优化</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">驱动层</span>
+                            <span class="detail-value">Kernel批处理</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 生态兼容性 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🌐</div>
+                        <div class="card-title">生态兼容性</div>
+                    </div>
+                    <div class="card-content">
+                        确保与现有软件生态的兼容性和迁移路径
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">ARM生态</span>
+                        <span class="option-tag">x86混合</span>
+                        <span class="option-tag">容器化</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">TensorRT-LLM</span>
+                            <span class="detail-value">ARM64支持</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">PyTorch</span>
+                            <span class="detail-value">完整支持</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">迁移工具</span>
+                            <span class="detail-value">二进制翻译</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 性能可观测性 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">📊</div>
+                        <div class="card-title">性能可观测性</div>
+                    </div>
+                    <div class="card-content">
+                        透视CPU-GPU协同工作的性能分析工具
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">硬件计数器</span>
+                        <span class="option-tag">追踪工具</span>
+                        <span class="option-tag">可视化</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">CPU剖析</span>
+                            <span class="detail-value">perf/VTune</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">GPU追踪</span>
+                            <span class="detail-value">Nsight</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">协同视图</span>
+                            <span class="detail-value">统一时间轴</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 动态调优 -->
+                <div class="design-card expandable" onclick="toggleDetail(this)">
+                    <div class="card-header">
+                        <div class="card-icon">🎛️</div>
+                        <div class="card-title">运行时动态调优</div>
+                    </div>
+                    <div class="card-content">
+                        根据工作负载特征动态调整硬件配置
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag">SMT开关</span>
+                        <span class="option-tag">频率调整</span>
+                        <span class="option-tag">功耗封顶</span>
+                    </div>
+                    <div class="detail-panel">
+                        <div class="detail-row">
+                            <span class="detail-label">SMT模式</span>
+                            <span class="detail-value">运行时切换</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">核心隔离</span>
+                            <span class="detail-value">关键任务独占</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">电源管理</span>
+                            <span class="detail-value">需求响应</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 软硬件协同流程图 -->
+            <div class="architecture-diagram">
+                <div class="arch-box">
+                    <div class="arch-icon">📈</div>
+                    <div class="arch-label">识别瓶颈</div>
+                    <div class="arch-desc">性能分析<br>热点定位</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-box">
+                    <div class="arch-icon">🎯</div>
+                    <div class="arch-label">优化调度</div>
+                    <div class="arch-desc">NUMA感知<br>进程绑定</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-box">
+                    <div class="arch-icon">⚙️</div>
+                    <div class="arch-label">软件优化</div>
+                    <div class="arch-desc">JIT编译<br>批处理</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-box highlight">
+                    <div class="arch-icon">✅</div>
+                    <div class="arch-label">持续监控</div>
+                    <div class="arch-desc">反馈闭环<br>动态调优</div>
+                </div>
+            </div>
+
+            <button class="drill-down-btn" onclick="navigateToLevel(2)" style="background: var(--bg-card);">
+                ← 返回CPU维度
+            </button>
+        </div>
+    </main>
+
+    <script>
+        // 当前层级
+        let currentLevel = 0;
+        const totalLevels = 4;
+
+        // 导航到指定层级
+        function navigateToLevel(level) {
+            if (level < 0 || level >= totalLevels) return;
+
+            // 隐藏当前层级
+            document.getElementById(`level-${currentLevel}`).classList.remove('active');
+
+            // 显示新层级
+            setTimeout(() => {
+                document.getElementById(`level-${level}`).classList.add('active');
+            }, 100);
+
+            // 更新导航状态
+            updateNavigation(level);
+            currentLevel = level;
+
+            // 滚动到顶部
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // 更新导航指示器
+        function updateNavigation(level) {
+            // 更新顶部指示器
+            document.querySelectorAll('.level-dot').forEach((dot, index) => {
+                dot.classList.remove('active', 'completed');
+                if (index === level) {
+                    dot.classList.add('active');
+                } else if (index < level) {
+                    dot.classList.add('completed');
+                }
+            });
+
+            // 更新侧边导航
+            document.querySelectorAll('.nav-item').forEach((item, index) => {
+                item.classList.toggle('active', index === level);
+            });
+        }
+
+        // 切换详情面板
+        function toggleDetail(card) {
+            const panel = card.querySelector('.detail-panel');
+            panel.classList.toggle('active');
+        }
+
+        // 绑定导航事件
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const level = parseInt(item.dataset.level);
+                navigateToLevel(level);
+            });
+        });
+
+        // 键盘导航
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+                navigateToLevel(Math.min(currentLevel + 1, totalLevels - 1));
+            } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+                navigateToLevel(Math.max(currentLevel - 1, 0));
+            }
+        });
+
+        // 触摸手势支持
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        document.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+        });
+
+        document.addEventListener('touchend', (e) => {
+            const touchEndX = e.changedTouches[0].clientX;
+            const touchEndY = e.changedTouches[0].clientY;
+            const diffX = touchEndX - touchStartX;
+            const diffY = touchEndY - touchStartY;
+
+            // 水平滑动或垂直滑动都可以切换层级
+            if (Math.abs(diffX) > 100 || Math.abs(diffY) > 100) {
+                if (diffX > 0 || diffY > 0) {
+                    navigateToLevel(Math.max(currentLevel - 1, 0));
+                } else {
+                    navigateToLevel(Math.min(currentLevel + 1, totalLevels - 1));
+                }
+            }
+        });
+
+        // 初始化
+        updateNavigation(0);
+    </script>
+</body>
+</html>

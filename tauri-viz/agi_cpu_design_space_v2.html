@@ -1,0 +1,2447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic AI CPU 设计空间可视化 v2</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: #1f2937;
+            --bg-card-hover: #2d3748;
+            --accent-cyan: #00d4ff;
+            --accent-purple: #a855f7;
+            --accent-green: #10b981;
+            --accent-orange: #f59e0b;
+            --accent-red: #ef4444;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
+            --border-color: #374151;
+            --shadow-glow: 0 0 30px rgba(0, 212, 255, 0.2);
+        }
+
+        body {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        /* 背景网格效果 */
+        .grid-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image:
+                linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* 动态光晕 */
+        .glow-orb {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(100px);
+            opacity: 0.3;
+            pointer-events: none;
+            z-index: 0;
+            transition: transform 0.5s ease;
+        }
+
+        .glow-orb-1 {
+            width: 400px;
+            height: 400px;
+            background: var(--accent-cyan);
+            top: -100px;
+            right: -100px;
+            animation: float1 8s ease-in-out infinite;
+        }
+
+        .glow-orb-2 {
+            width: 300px;
+            height: 300px;
+            background: var(--accent-purple);
+            bottom: -50px;
+            left: -50px;
+            animation: float2 10s ease-in-out infinite;
+        }
+
+        .glow-orb-3 {
+            width: 200px;
+            height: 200px;
+            background: var(--accent-green);
+            top: 50%;
+            left: 50%;
+            animation: float3 12s ease-in-out infinite;
+            opacity: 0.15;
+        }
+
+        @keyframes float1 {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(-30px, 30px) scale(1.1); }
+            66% { transform: translate(20px, -20px) scale(0.9); }
+        }
+
+        @keyframes float2 {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            50% { transform: translate(40px, -40px) scale(1.15); }
+        }
+
+        @keyframes float3 {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-40%, -60%) scale(1.2); }
+        }
+
+        /* 顶部导航 */
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            background: rgba(10, 14, 26, 0.95);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 2rem;
+        }
+
+        .header-content {
+            max-width: 1600px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.25rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .header-btn {
+            padding: 0.5rem 1rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.875rem;
+        }
+
+        .header-btn:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        .header-btn.primary {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            border: none;
+            color: var(--bg-primary);
+        }
+
+        .level-indicator {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .level-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--border-color);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .level-dot.active {
+            background: var(--accent-cyan);
+            box-shadow: 0 0 15px var(--accent-cyan);
+        }
+
+        .level-dot.completed {
+            background: var(--accent-green);
+        }
+
+        .level-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-left: 0.5rem;
+        }
+
+        /* 侧边导航 */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            padding: 1rem;
+        }
+
+        .nav-item {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .nav-item:hover {
+            border-color: var(--accent-cyan);
+            box-shadow: var(--shadow-glow);
+            transform: scale(1.1);
+        }
+
+        .nav-item.active {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(168, 85, 247, 0.2));
+            border-color: var(--accent-cyan);
+        }
+
+        .nav-item .icon {
+            font-size: 1.2rem;
+        }
+
+        .nav-item .label {
+            font-size: 0.5rem;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .nav-tooltip {
+            position: absolute;
+            left: 60px;
+            background: var(--bg-card);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+            border: 1px solid var(--border-color);
+        }
+
+        .nav-item:hover .nav-tooltip {
+            opacity: 1;
+        }
+
+        /* 配置面板 */
+        .config-panel {
+            position: fixed;
+            right: 0;
+            top: 80px;
+            width: 320px;
+            height: calc(100vh - 100px);
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border-color);
+            padding: 1.5rem;
+            overflow-y: auto;
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            z-index: 90;
+        }
+
+        .config-panel.open {
+            transform: translateX(0);
+        }
+
+        .config-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .config-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .config-close {
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            background: var(--bg-card);
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .config-close:hover {
+            background: var(--bg-card-hover);
+        }
+
+        /* 主内容区 */
+        .main-container {
+            margin-left: 80px;
+            margin-right: 0;
+            padding: 100px 2rem 2rem;
+            max-width: 1400px;
+            position: relative;
+            z-index: 1;
+            transition: margin-right 0.3s ease;
+        }
+
+        .main-container.with-panel {
+            margin-right: 340px;
+        }
+
+        /* 层级容器 */
+        .level-container {
+            display: none;
+            opacity: 0;
+        }
+
+        .level-container.active {
+            display: block;
+            animation: fadeInUp 0.5s ease forwards;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* 标题区 */
+        .level-header {
+            margin-bottom: 2rem;
+        }
+
+        .level-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(168, 85, 247, 0.2));
+            border: 1px solid var(--accent-cyan);
+            border-radius: 20px;
+            font-size: 0.75rem;
+            color: var(--accent-cyan);
+            margin-bottom: 1rem;
+        }
+
+        .level-title {
+            font-size: 2.25rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--text-primary), var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .level-subtitle {
+            color: var(--text-secondary);
+            font-size: 1rem;
+        }
+
+        /* 设计空间网格 */
+        .design-space-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        /* 设计空间卡片 - 3D效果 */
+        .design-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            transform-style: preserve-3d;
+            perspective: 1000px;
+        }
+
+        .design-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+            transform: scaleX(0);
+            transition: transform 0.4s ease;
+        }
+
+        .design-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .design-card:hover {
+            border-color: var(--accent-cyan);
+            transform: translateY(-8px) rotateX(2deg);
+            box-shadow:
+                0 20px 40px rgba(0, 0, 0, 0.3),
+                0 0 30px rgba(0, 212, 255, 0.1);
+        }
+
+        .design-card.selected {
+            border-color: var(--accent-green);
+            background: rgba(16, 185, 129, 0.05);
+        }
+
+        .design-card.selected::before {
+            background: var(--accent-green);
+            transform: scaleX(1);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-icon {
+            width: 45px;
+            height: 45px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.2), rgba(168, 85, 247, 0.2));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.3rem;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .card-content {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+            line-height: 1.5;
+        }
+
+        /* 选项列表 */
+        .options-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .option-tag {
+            padding: 0.35rem 0.85rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .option-tag:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+            transform: translateY(-2px);
+        }
+
+        .option-tag.primary {
+            background: rgba(0, 212, 255, 0.15);
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        .option-tag.selected {
+            background: var(--accent-green);
+            border-color: var(--accent-green);
+            color: var(--bg-primary);
+        }
+
+        /* 详细面板 */
+        .detail-panel {
+            display: none;
+            margin-top: 1rem;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .detail-panel.active {
+            display: block;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        .detail-value {
+            font-weight: 600;
+            color: var(--accent-cyan);
+        }
+
+        /* 技术详情区 */
+        .tech-detail {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        .tech-detail-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .tech-detail-content {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            line-height: 1.7;
+        }
+
+        .tech-detail-content p {
+            margin-bottom: 1rem;
+        }
+
+        .tech-detail-content p:last-child {
+            margin-bottom: 0;
+        }
+
+        .tech-detail-content code {
+            background: var(--bg-card);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.85em;
+            color: var(--accent-cyan);
+        }
+
+        /* 对比表格 */
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 2rem 0;
+            background: var(--bg-card);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .comparison-table th {
+            background: var(--bg-secondary);
+            font-weight: 600;
+            color: var(--accent-cyan);
+        }
+
+        .comparison-table tr:hover td {
+            background: var(--bg-secondary);
+        }
+
+        .comparison-table td {
+            color: var(--text-secondary);
+        }
+
+        .comparison-table .highlight {
+            color: var(--accent-green);
+            font-weight: 600;
+        }
+
+        /* 架构图 */
+        .architecture-diagram {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 2rem;
+            padding: 2rem;
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+
+        .arch-box {
+            padding: 1.5rem 2rem;
+            background: var(--bg-card);
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            text-align: center;
+            min-width: 140px;
+            transition: all 0.3s ease;
+        }
+
+        .arch-box:hover {
+            border-color: var(--accent-cyan);
+            box-shadow: var(--shadow-glow);
+            transform: scale(1.05);
+        }
+
+        .arch-box.highlight {
+            border-color: var(--accent-cyan);
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(168, 85, 247, 0.1));
+        }
+
+        .arch-icon {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .arch-label {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .arch-desc {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .arch-arrow {
+            font-size: 2rem;
+            color: var(--accent-cyan);
+        }
+
+        /* 下层按钮 */
+        .drill-down-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.875rem 1.75rem;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            border: none;
+            border-radius: 12px;
+            color: var(--bg-primary);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+            font-size: 0.95rem;
+        }
+
+        .drill-down-btn:hover {
+            transform: translateX(10px);
+            box-shadow: 0 10px 40px rgba(0, 212, 255, 0.3);
+        }
+
+        .drill-down-btn.secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .drill-down-btn.secondary:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+            transform: translateX(-10px);
+        }
+
+        /* 参数滑块 */
+        .slider-control {
+            margin: 1.5rem 0;
+            padding: 1rem;
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .slider-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .slider-label {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .slider-value {
+            color: var(--accent-cyan);
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+
+        .slider {
+            width: 100%;
+            height: 8px;
+            border-radius: 4px;
+            background: var(--bg-secondary);
+            appearance: none;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .slider::-webkit-slider-thumb {
+            appearance: none;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            cursor: pointer;
+            box-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
+            transition: transform 0.2s ease;
+        }
+
+        .slider::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        .slider::-moz-range-thumb {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
+        }
+
+        .slider-marks {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 0.5rem;
+        }
+
+        .slider-mark {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        /* 雷达图容器 */
+        .radar-chart-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .radar-chart-container canvas {
+            max-width: 100%;
+            height: auto;
+        }
+
+        .chart-legend {
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.5rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.perf {
+            background: var(--accent-cyan);
+            box-shadow: 0 0 10px var(--accent-cyan);
+        }
+
+        .legend-dot.eff {
+            background: var(--accent-green);
+            box-shadow: 0 0 10px var(--accent-green);
+        }
+
+        .legend-dot.cost {
+            background: var(--accent-orange);
+            box-shadow: 0 0 10px var(--accent-orange);
+        }
+
+        /* 配置摘要 */
+        .config-summary {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .summary-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        .summary-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .summary-item:last-child {
+            border-bottom: none;
+        }
+
+        .summary-label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .summary-value {
+            color: var(--accent-cyan);
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+
+        /* 性能估算卡片 */
+        .perf-card {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(168, 85, 247, 0.1));
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+        }
+
+        .perf-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .perf-card-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .perf-card-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .perf-card-bar {
+            height: 8px;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .perf-card-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+
+        .perf-card-fill.good {
+            background: var(--accent-green);
+        }
+
+        .perf-card-fill.warning {
+            background: var(--accent-orange);
+        }
+
+        .perf-card-fill.critical {
+            background: var(--accent-red);
+        }
+
+        /* 预设模板 */
+        .preset-buttons {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .preset-btn {
+            padding: 0.75rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.8rem;
+            text-align: center;
+        }
+
+        .preset-btn:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        .preset-btn.active {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            border: none;
+            color: var(--bg-primary);
+        }
+
+        /* 导出按钮 */
+        .export-buttons {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .export-btn {
+            flex: 1;
+            padding: 0.75rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.85rem;
+        }
+
+        .export-btn:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        /* Toast 通知 */
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            padding: 1rem 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 200;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success {
+            border-color: var(--accent-green);
+        }
+
+        .toast.error {
+            border-color: var(--accent-red);
+        }
+
+        /* 响应式 */
+        @media (max-width: 1024px) {
+            .config-panel {
+                width: 100%;
+                right: 0;
+                top: auto;
+                bottom: 0;
+                height: 60vh;
+                border-left: none;
+                border-top: 1px solid var(--border-color);
+                transform: translateY(100%);
+            }
+
+            .config-panel.open {
+                transform: translateY(0);
+            }
+
+            .main-container.with-panel {
+                margin-right: 0;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                display: none;
+            }
+
+            .main-container {
+                margin-left: 0;
+                padding: 80px 1rem 1rem;
+            }
+
+            .level-title {
+                font-size: 1.5rem;
+            }
+
+            .design-space-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .architecture-diagram {
+                flex-direction: column;
+            }
+
+            .arch-arrow {
+                transform: rotate(90deg);
+            }
+
+            .header-content {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+
+            .level-indicator {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="grid-bg"></div>
+    <div class="glow-orb glow-orb-1"></div>
+    <div class="glow-orb glow-orb-2"></div>
+    <div class="glow-orb glow-orb-3"></div>
+
+    <!-- 顶部导航 -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">Agentic AI CPU 设计空间 v2</div>
+            <div class="level-indicator">
+                <div class="level-dot active" data-level="0"></div>
+                <span class="level-label">系统</span>
+                <div class="level-dot" data-level="1"></div>
+                <span class="level-label">SoC</span>
+                <div class="level-dot" data-level="2"></div>
+                <span class="level-label">CPU</span>
+                <div class="level-dot" data-level="3"></div>
+                <span class="level-label">软硬协同</span>
+            </div>
+            <div class="header-actions">
+                <button class="header-btn" onclick="resetConfig()">重置</button>
+                <button class="header-btn primary" onclick="toggleConfigPanel()">⚙️ 配置</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 侧边导航 -->
+    <nav class="sidebar">
+        <div class="nav-item active" data-level="0">
+            <div class="icon">🖥️</div>
+            <div class="label">系统</div>
+            <div class="nav-tooltip">系统维度</div>
+        </div>
+        <div class="nav-item" data-level="1">
+            <div class="icon">⚡</div>
+            <div class="label">SoC</div>
+            <div class="nav-tooltip">SoC维度</div>
+        </div>
+        <div class="nav-item" data-level="2">
+            <div class="icon">🔧</div>
+            <div class="label">CPU</div>
+            <div class="nav-tooltip">CPU维度</div>
+        </div>
+        <div class="nav-item" data-level="3">
+            <div class="icon">🤝</div>
+            <div class="label">协同</div>
+            <div class="nav-tooltip">软硬件协同</div>
+        </div>
+    </nav>
+
+    <!-- 配置面板 -->
+    <aside class="config-panel" id="configPanel">
+        <div class="config-header">
+            <div class="config-title">⚙️ 配置与估算</div>
+            <button class="config-close" onclick="toggleConfigPanel()">✕</button>
+        </div>
+
+        <!-- 预设模板 -->
+        <div class="preset-buttons">
+            <button class="preset-btn" onclick="applyPreset('nvidia')">NVIDIA风格</button>
+            <button class="preset-btn" onclick="applyPreset('arm')">Arm风格</button>
+            <button class="preset-btn active" onclick="applyPreset('balanced')">均衡风格</button>
+        </div>
+
+        <!-- 性能估算 -->
+        <div class="perf-card">
+            <div class="perf-card-header">
+                <div class="perf-card-title">综合性能得分</div>
+                <div class="perf-card-value" id="perfScore">75</div>
+            </div>
+            <div class="perf-card-bar">
+                <div class="perf-card-fill" id="perfFill" style="width: 75%"></div>
+            </div>
+        </div>
+
+        <div class="perf-card">
+            <div class="perf-card-header">
+                <div class="perf-card-title">能效比</div>
+                <div class="perf-card-value" id="effScore">68</div>
+            </div>
+            <div class="perf-card-bar">
+                <div class="perf-card-fill good" id="effFill" style="width: 68%"></div>
+            </div>
+        </div>
+
+        <div class="perf-card">
+            <div class="perf-card-header">
+                <div class="perf-card-title">成本指数</div>
+                <div class="perf-card-value" id="costScore">82</div>
+            </div>
+            <div class="perf-card-bar">
+                <div class="perf-card-fill warning" id="costFill" style="width: 82%"></div>
+            </div>
+        </div>
+
+        <!-- 雷达图可视化 -->
+        <div class="radar-chart-container">
+            <div class="summary-title">📊 权衡分析雷达图</div>
+            <canvas id="radarChart" width="280" height="280"></canvas>
+            <div class="chart-legend">
+                <div class="legend-item"><span class="legend-dot perf"></span>性能</div>
+                <div class="legend-item"><span class="legend-dot eff"></span>能效</div>
+                <div class="legend-item"><span class="legend-dot cost"></span>成本</div>
+            </div>
+        </div>
+
+        <!-- 配置摘要 -->
+        <div class="config-summary">
+            <div class="summary-title">📋 当前配置摘要</div>
+            <div class="summary-grid" id="configSummary">
+                <!-- 动态生成 -->
+            </div>
+        </div>
+
+        <!-- 导出按钮 -->
+        <div class="export-buttons">
+            <button class="export-btn" onclick="exportConfig('json')">📄 导出JSON</button>
+            <button class="export-btn" onclick="exportConfig('url')">🔗 分享链接</button>
+        </div>
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="main-container" id="mainContainer">
+        <!-- 第一层：系统维度 -->
+        <div class="level-container active" id="level-0">
+            <div class="level-header">
+                <span class="level-badge">Level 1</span>
+                <h1 class="level-title">系统维度设计空间</h1>
+                <p class="level-subtitle">从机架级和多节点架构视角探索Agentic AI的系统级设计选择</p>
+            </div>
+
+            <div class="design-space-grid">
+                <!-- CPU-GPU配比 -->
+                <div class="design-card" data-option="cpu_gpu_ratio" data-value="1:2">
+                    <div class="card-header">
+                        <div class="card-icon">⚖️</div>
+                        <div class="card-title">CPU-GPU配比模式</div>
+                    </div>
+                    <div class="card-content">
+                        决定CPU与GPU的数量比例，影响训练/推理效率和资源利用率。根据DeepSeek-V3优化经验，73%的性能提升来自CPU端优化。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="1:4">GPU为主型 (1:4)</span>
+                        <span class="option-tag primary" data-value="1:2">训练优化 (1:2)</span>
+                        <span class="option-tag" data-value="1:1">均衡型 (1:1)</span>
+                        <span class="option-tag" data-value="cpu-only">CPU机柜</span>
+                    </div>
+                </div>
+
+                <!-- 机架功率密度 -->
+                <div class="design-card" data-option="rack_density" data-value="36kW">
+                    <div class="card-header">
+                        <div class="card-icon">🗄️</div>
+                        <div class="card-title">机架功率密度</div>
+                    </div>
+                    <div class="card-content">
+                        优化功率密度、散热方式。Arm AGI CPU支持36kW风冷机架，8160核心。高密度部署降低TCO。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="20kW">标准 (20kW)</span>
+                        <span class="option-tag primary" data-value="36kW">高密度 (36kW)</span>
+                        <span class="option-tag" data-value="liquid">液冷 (60kW+)</span>
+                    </div>
+                </div>
+
+                <!-- 分层架构 -->
+                <div class="design-card" data-option="layer_arch" data-value="unified">
+                    <div class="card-header">
+                        <div class="card-icon">🏗️</div>
+                        <div class="card-title">分层系统架构</div>
+                    </div>
+                    <div class="card-content">
+                        将工作负载分配到不同层级。NVIDIA Vera Rubin支持独立CPU机柜（256颗CPU），专为RL/Agent推理设计。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="separate">分离三层</span>
+                        <span class="option-tag primary" data-value="unified">统一调度</span>
+                        <span class="option-tag" data-value="hybrid">混合模式</span>
+                    </div>
+                </div>
+
+                <!-- 互联拓扑 -->
+                <div class="design-card" data-option="interconnect" data-value="nvlink">
+                    <div class="card-header">
+                        <div class="card-icon">🔗</div>
+                        <div class="card-title">节点间互联拓扑</div>
+                    </div>
+                    <div class="card-content">
+                        决定多节点间的通信带宽和延迟。NVLink-C2C提供1.8TB/s一致性带宽，是Grace的2倍。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag primary" data-value="nvlink">NVLink-C2C (1.8TB/s)</span>
+                        <span class="option-tag" data-value="ib">InfiniBand</span>
+                        <span class="option-tag" data-value="roce">RoCEv2</span>
+                    </div>
+                </div>
+
+                <!-- 内存架构 -->
+                <div class="design-card" data-option="mem_arch" data-value="cxl">
+                    <div class="card-header">
+                        <div class="card-icon">💾</div>
+                        <div class="card-title">系统级内存架构</div>
+                    </div>
+                    <div class="card-content">
+                        内存池化、分解式内存和CXL支持。Arm AGI CPU支持CXL 3.0 Type 3内存扩展。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="local">本地内存</span>
+                        <span class="option-tag primary" data-value="cxl">CXL 3.0池化</span>
+                        <span class="option-tag" data-value="disaggregated">分解式内存</span>
+                    </div>
+                </div>
+
+                <!-- 部署模式 -->
+                <div class="design-card" data-option="deploy_mode" data-value="ai_factory">
+                    <div class="card-header">
+                        <div class="card-icon">🏭</div>
+                        <div class="card-title">部署模式</div>
+                    </div>
+                    <div class="card-content">
+                        AI工厂 vs 传统数据中心。AI工厂强调机架级优化和大规模并行Agent环境。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="traditional">传统DC</span>
+                        <span class="option-tag primary" data-value="ai_factory">AI工厂</span>
+                        <span class="option-tag" data-value="edge">边缘部署</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 技术详情 -->
+            <div class="tech-detail">
+                <div class="tech-detail-title">
+                    <span>💡</span>
+                    <span>系统维度技术细节</span>
+                </div>
+                <div class="tech-detail-content">
+                    <p><strong>阿姆达尔定律在AI系统中的应用：</strong>NVIDIA明确指出"系统性能越来越受制于agentic循环中CPU端串行任务的限制"。DeepSeek-V3在GB200上的优化显示，73%的约349 TFLOPS性能提升来自解决CPU overhead。</p>
+                    <p><strong>独立CPU机柜的价值：</strong>Vera Rubin平台引入256颗液冷Vera CPU的独立机柜，支持超过22,500个并发RL/Agent环境。这使得CPU密集型工作负载不再受限于与GPU的固定配比。</p>
+                    <p><strong>CXL 3.0内存池化：</strong>Arm AGI CPU支持CXL 3.0 Type 3，允许内存扩展和池化，突破单机内存容量限制，特别适合大规模Agent推理场景。</p>
+                </div>
+            </div>
+
+            <!-- 系统架构图 -->
+            <div class="architecture-diagram">
+                <div class="arch-box">
+                    <div class="arch-icon">🌐</div>
+                    <div class="arch-label">前端调度</div>
+                    <div class="arch-desc">请求路由/负载均衡<br>~10k QPS</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-box highlight">
+                    <div class="arch-icon">🧠</div>
+                    <div class="arch-label">中端推理</div>
+                    <div class="arch-desc">Agent决策/模型推理<br>GPU+CPU协同</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-box">
+                    <div class="arch-icon">💪</div>
+                    <div class="arch-label">后端训练</div>
+                    <div class="arch-desc">模型微调/RLHF<br>高带宽互联</div>
+                </div>
+            </div>
+
+            <!-- 参数滑块 -->
+            <div class="slider-control">
+                <div class="slider-header">
+                    <span class="slider-label">Agent并发环境数量</span>
+                    <span class="slider-value" id="agentCount">10,000</span>
+                </div>
+                <input type="range" class="slider" id="agentSlider" min="1000" max="50000" value="10000" step="1000">
+                <div class="slider-marks">
+                    <span class="slider-mark">1K</span>
+                    <span class="slider-mark">10K</span>
+                    <span class="slider-mark">25K</span>
+                    <span class="slider-mark">50K</span>
+                </div>
+            </div>
+
+            <button class="drill-down-btn" onclick="navigateToLevel(1)">
+                深入SoC维度 →
+            </button>
+        </div>
+
+        <!-- 第二层：SoC维度 -->
+        <div class="level-container" id="level-1">
+            <div class="level-header">
+                <span class="level-badge">Level 2</span>
+                <h1 class="level-title">SoC维度设计空间</h1>
+                <p class="level-subtitle">探索芯片级架构设计，包括核心选择、缓存层次、互联和内存子系统</p>
+            </div>
+
+            <div class="design-space-grid">
+                <!-- 核心架构 -->
+                <div class="design-card" data-option="core_arch" data-value="custom">
+                    <div class="card-header">
+                        <div class="card-icon">🔬</div>
+                        <div class="card-title">核心架构选择</div>
+                    </div>
+                    <div class="card-content">
+                        NVIDIA Vera采用自研Olympus核心（10-wide前端），Arm AGI CPU采用Neoverse V3。自研核心可实现1.5x IPC提升。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="stock">公版核心</span>
+                        <span class="option-tag primary" data-value="custom">自研核心</span>
+                        <span class="option-tag" data-value="hybrid">混合架构</span>
+                    </div>
+                </div>
+
+                <!-- 缓存层次 -->
+                <div class="design-card" data-option="cache_config" data-value="large">
+                    <div class="card-header">
+                        <div class="card-icon">📚</div>
+                        <div class="card-title">缓存层次结构</div>
+                    </div>
+                    <div class="card-content">
+                        Grace将L2从2MB缩减到1MB导致性能问题。Vera L3提升至162MB（+42%），Arm AGI CPU每核2MB L2。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="small">能效优先</span>
+                        <span class="option-tag primary" data-value="large">大缓存配置</span>
+                        <span class="option-tag" data-value="adaptive">自适应缓存</span>
+                    </div>
+                </div>
+
+                <!-- 片内互联 -->
+                <div class="design-card" data-option="noc_arch" data-value="monolithic">
+                    <div class="card-header">
+                        <div class="card-icon">🔌</div>
+                        <div class="card-title">Die架构策略</div>
+                    </div>
+                    <div class="card-content">
+                        Vera采用单片架构消除NUMA边界，第二代SCF提供3.4TB/s分切带宽。Arm AGI CPU采用chiplet设计。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag primary" data-value="monolithic">单片Monolithic</span>
+                        <span class="option-tag" data-value="chiplet">Chiplet</span>
+                        <span class="option-tag" data-value="hybrid">混合架构</span>
+                    </div>
+                </div>
+
+                <!-- 内存子系统 -->
+                <div class="design-card" data-option="memory_type" data-value="socamm">
+                    <div class="card-header">
+                        <div class="card-icon">💾</div>
+                        <div class="card-title">内存子系统</div>
+                    </div>
+                    <div class="card-content">
+                        Vera的SOCAMM支持1.5TB可更换内存（vs Grace焊死480GB）。Arm AGI CPU使用传统DDR5-8800。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="ddr5">DDR5 DIMM</span>
+                        <span class="option-tag primary" data-value="socamm">SOCAMM</span>
+                        <span class="option-tag" data-value="hbm">HBM</span>
+                    </div>
+                </div>
+
+                <!-- I/O扩展 -->
+                <div class="design-card" data-option="io_config" data-value="high">
+                    <div class="card-header">
+                        <div class="card-icon">🚪</div>
+                        <div class="card-title">I/O配置</div>
+                    </div>
+                    <div class="card-content">
+                        Arm AGI CPU提供96条PCIe Gen6通道，Vera支持PCIe Gen6和1.8TB/s NVLink-C2C。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="standard">标准配置</span>
+                        <span class="option-tag primary" data-value="high">高密度I/O</span>
+                        <span class="option-tag" data-value="custom">定制I/O</span>
+                    </div>
+                </div>
+
+                <!-- 工艺节点 -->
+                <div class="design-card" data-option="process" data-value="3nm">
+                    <div class="card-header">
+                        <div class="card-icon">🏭</div>
+                        <div class="card-title">工艺节点</div>
+                    </div>
+                    <div class="card-content">
+                        Arm AGI CPU采用TSMC 3nm，Vera预计使用类似工艺。3nm相比5nm提供约1.7x密度提升和1.15x性能提升。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="5nm">5nm成熟</span>
+                        <span class="option-tag primary" data-value="3nm">3nm领先</span>
+                        <span class="option-tag" data-value="2nm">2nm前沿</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 技术详情 -->
+            <div class="tech-detail">
+                <div class="tech-detail-title">
+                    <span>💡</span>
+                    <span>SoC维度技术细节</span>
+                </div>
+                <div class="tech-detail-content">
+                    <p><strong>单片 vs Chiplet的权衡：</strong>Vera的单片架构确保所有核心到资源的距离相同，"无需传统NUMA调优即可获得最佳性能"。但chiplet设计提供更好的扩展性和成本优势。</p>
+                    <p><strong>SOCAMM的创新：</strong>首次将LPDDR的能效优势与服务器级的可维护性结合。8个SOCAMM模块提供1.2TB/s带宽，功耗不到传统DDR的一半。</p>
+                    <p><strong>SCF互联：</strong>第二代SCF的3.4TB/s分切带宽确保在高负载下仍能维持超过90%的峰值内存带宽，每核获得约14GB/s的可持续带宽。</p>
+                </div>
+            </div>
+
+            <!-- 架构对比 -->
+            <div class="architecture-diagram">
+                <div class="arch-box">
+                    <div class="arch-icon">📦</div>
+                    <div class="arch-label">单片架构</div>
+                    <div class="arch-desc">统一拓扑<br>&lt;100ns延迟<br>零NUMA边界</div>
+                </div>
+                <div class="arch-box" style="border-style: dashed;">
+                    <div class="arch-icon">🔄</div>
+                    <div class="arch-label">VS</div>
+                </div>
+                <div class="arch-box">
+                    <div class="arch-icon">🧩</div>
+                    <div class="arch-label">Chiplet</div>
+                    <div class="arch-desc">灵活扩展<br>成本优化<br>跨die延迟</div>
+                </div>
+            </div>
+
+            <!-- 对比表格 -->
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>参数</th>
+                        <th>NVIDIA Vera</th>
+                        <th>Arm AGI CPU</th>
+                        <th>设计权衡</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>核心</td>
+                        <td>88 × Olympus (自研)</td>
+                        <td>136 × Neoverse V3</td>
+                        <td>自研性能 vs 公版生态</td>
+                    </tr>
+                    <tr>
+                        <td>L2缓存</td>
+                        <td>未公开</td>
+                        <td>2MB/核</td>
+                        <td>更大L2提升分支密集代码</td>
+                    </tr>
+                    <tr>
+                        <td>L3缓存</td>
+                        <td>162MB</td>
+                        <td>128MB</td>
+                        <td>更大L3减少内存访问</td>
+                    </tr>
+                    <tr>
+                        <td>内存带宽</td>
+                        <td>1.2 TB/s</td>
+                        <td>~816 GB/s</td>
+                        <td>LPDDR能效 vs DDR容量</td>
+                    </tr>
+                    <tr>
+                        <td>内存容量</td>
+                        <td>1.5TB (SOCAMM)</td>
+                        <td>DDR5扩展</td>
+                        <td>可更换 vs 标准生态</td>
+                    </tr>
+                    <tr>
+                        <td>PCIe</td>
+                        <td>Gen6</td>
+                        <td>96 × Gen6</td>
+                        <td>CXL 3.0内存池化</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div style="display: flex; gap: 1rem;">
+                <button class="drill-down-btn" onclick="navigateToLevel(2)">
+                    深入CPU维度 →
+                </button>
+                <button class="drill-down-btn secondary" onclick="navigateToLevel(0)">
+                    ← 返回系统维度
+                </button>
+            </div>
+        </div>
+
+        <!-- 第三层：CPU维度 -->
+        <div class="level-container" id="level-2">
+            <div class="level-header">
+                <span class="level-badge">Level 3</span>
+                <h1 class="level-title">CPU维度设计空间</h1>
+                <p class="level-subtitle">深入CPU核心微架构，探索多线程、指令集、分支预测和专用加速器</p>
+            </div>
+
+            <div class="design-space-grid">
+                <!-- 多线程策略 -->
+                <div class="design-card" data-option="smt_mode" data-value="spatial">
+                    <div class="card-header">
+                        <div class="card-icon">🧵</div>
+                        <div class="card-title">多线程策略</div>
+                    </div>
+                    <div class="card-content">
+                        Grace不支持SMT（72核=72线程）被证明是市场短板。Vera的空间多线程提供88核×2=176线程，物理隔离保证可预测延迟。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="none">无SMT</span>
+                        <span class="option-tag" data-value="temporal">传统SMT</span>
+                        <span class="option-tag primary" data-value="spatial">空间多线程</span>
+                    </div>
+                </div>
+
+                <!-- 指令集 -->
+                <div class="design-card" data-option="isa_ext" data-value="fp8">
+                    <div class="card-header">
+                        <div class="card-icon">📝</div>
+                        <div class="card-title">AI指令集扩展</div>
+                    </div>
+                    <div class="card-content">
+                        Vera是首个支持FP8的CPU。FP8可减少数据移动和转换开销，对于Agentic AI的频繁推理决策至关重要。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="bf16">BF16/INT8</span>
+                        <span class="option-tag primary" data-value="fp8">+FP8原生</span>
+                        <span class="option-tag" data-value="custom">定制扩展</span>
+                    </div>
+                </div>
+
+                <!-- 分支预测 -->
+                <div class="design-card" data-option="branch_pred" data-value="neural">
+                    <div class="card-header">
+                        <div class="card-icon">🔮</div>
+                        <div class="card-title">分支预测器</div>
+                    </div>
+                    <div class="card-content">
+                        Python/PyTorch dispatch是分支密集型代码。Vera的神经分支预测器每周期可评估两个已采取分支。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="static">静态预测</span>
+                        <span class="option-tag" data-value="dynamic">动态预测</span>
+                        <span class="option-tag primary" data-value="neural">神经预测器</span>
+                    </div>
+                </div>
+
+                <!-- 前端宽度 -->
+                <div class="design-card" data-option="frontend_width" data-value="10">
+                    <div class="card-header">
+                        <div class="card-icon">📏</div>
+                        <div class="card-title">指令前端宽度</div>
+                    </div>
+                    <div class="card-content">
+                        Vera的10-wide前端宽于AMD Zen5 (8-wide)和Intel Granite Rapids (6-wide)，更宽前端提升ILP但增加功耗。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="6">6-wide (能效)</span>
+                        <span class="option-tag" data-value="8">8-wide (均衡)</span>
+                        <span class="option-tag primary" data-value="10">10-wide (性能)</span>
+                    </div>
+                </div>
+
+                <!-- 专用加速器 -->
+                <div class="design-card" data-option="accelerators" data-value="full">
+                    <div class="card-header">
+                        <div class="card-icon">🚀</div>
+                        <div class="card-title">片上专用加速器</div>
+                    </div>
+                    <div class="card-content">
+                        针对AI工作负载的专用加速：RDMA引擎绕过CPU NoC，加密引擎降低安全开销，压缩引擎加速模型传输。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="minimal">最小配置</span>
+                        <span class="option-tag" data-value="standard">标准加速</span>
+                        <span class="option-tag primary" data-value="full">全加速套件</span>
+                    </div>
+                </div>
+
+                <!-- 频率策略 -->
+                <div class="design-card" data-option="freq_strategy" data-value="aggressive">
+                    <div class="card-header">
+                        <div class="card-icon">⚡</div>
+                        <div class="card-title">频率与功耗策略</div>
+                    </div>
+                    <div class="card-content">
+                        Agentic AI的kernel launch延迟敏感场景需要部分核心能boost到最高频率（DeepSeek文档建议）。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="efficient">能效优先</span>
+                        <span class="option-tag" data-value="balanced">平衡策略</span>
+                        <span class="option-tag primary" data-value="aggressive">激进boost</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 技术详情 -->
+            <div class="tech-detail">
+                <div class="tech-detail-title">
+                    <span>💡</span>
+                    <span>CPU维度技术细节</span>
+                </div>
+                <div class="tech-detail-content">
+                    <p><strong>空间多线程 vs 传统SMT：</strong>传统SMT通过时间切片共享流水线资源，导致性能抖动和尾延迟问题。空间多线程物理分区资源（执行单元、缓存、寄存器文件），保证每线程性能可预测，特别适合多租户AI工厂。</p>
+                    <p><strong>神经分支预测器：</strong>Python解释器和PyTorch dispatch产生大量不可预测分支。神经预测器使用ML模型学习分支模式，每周期评估两个已采取分支，显著降低前端停顿。</p>
+                    <p><strong>FP8的价值：</strong>在Agentic AI循环中，CPU需要频繁进行模型量化/反量化计算。原生FP8支持避免转换开销，减少延迟和能耗。</p>
+                </div>
+            </div>
+
+            <!-- 多线程对比 -->
+            <div class="architecture-diagram">
+                <div class="arch-box">
+                    <div class="arch-icon">⏱️</div>
+                    <div class="arch-label">传统SMT</div>
+                    <div class="arch-desc">时间切片<br>性能抖动<br>共享资源竞争</div>
+                </div>
+                <div class="arch-box" style="border-style: dashed;">
+                    <div class="arch-icon">🔄</div>
+                    <div class="arch-label">VS</div>
+                </div>
+                <div class="arch-box highlight">
+                    <div class="arch-icon">🏗️</div>
+                    <div class="arch-label">空间多线程</div>
+                    <div class="arch-desc">物理隔离<br>可预测延迟<br>独立流水线</div>
+                </div>
+            </div>
+
+            <!-- 参数滑块 -->
+            <div class="slider-control">
+                <div class="slider-header">
+                    <span class="slider-label">SMT线程数/核</span>
+                    <span class="slider-value" id="smtValue">2</span>
+                </div>
+                <input type="range" class="slider" id="smtSlider" min="1" max="4" value="2" step="1">
+                <div class="slider-marks">
+                    <span class="slider-mark">1 (无SMT)</span>
+                    <span class="slider-mark">2</span>
+                    <span class="slider-mark">4</span>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 1rem;">
+                <button class="drill-down-btn" onclick="navigateToLevel(3)">
+                    深入软硬协同 →
+                </button>
+                <button class="drill-down-btn secondary" onclick="navigateToLevel(1)">
+                    ← 返回SoC维度
+                </button>
+            </div>
+        </div>
+
+        <!-- 第四层：软硬件协同维度 -->
+        <div class="level-container" id="level-3">
+            <div class="level-header">
+                <span class="level-badge">Level 4</span>
+                <h1 class="level-title">软硬件协同设计空间</h1>
+                <p class="level-subtitle">探索软硬件协同优化，从瓶颈识别到调度策略再到生态兼容</p>
+            </div>
+
+            <div class="design-space-grid">
+                <!-- CPU端瓶颈 -->
+                <div class="design-card" data-option="bottleneck_opt" data-value="aggressive">
+                    <div class="card-header">
+                        <div class="card-icon">🔍</div>
+                        <div class="card-title">CPU端瓶颈优化</div>
+                    </div>
+                    <div class="card-content">
+                        DeepSeek-V3优化显示73%收益来自CPU端。Vera的1.5x IPC、FP8支持、神经预测器都针对此问题。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="minimal">基础优化</span>
+                        <span class="option-tag primary" data-value="aggressive">激进优化</span>
+                        <span class="option-tag" data-value="hw_sw">软硬协同</span>
+                    </div>
+                </div>
+
+                <!-- NUMA调度 -->
+                <div class="design-card" data-option="numa_aware" data-value="auto">
+                    <div class="card-header">
+                        <div class="card-icon">🗺️</div>
+                        <div class="card-title">NUMA感知调度</div>
+                    </div>
+                    <div class="card-content">
+                        DeepSeek使用bindpcie工具绑定进程到本地GPU获得70.6 TFLOPS提升。自动化NUMA调度是关键方向。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="manual">手动绑定</span>
+                        <span class="option-tag primary" data-value="auto">自动调度</span>
+                        <span class="option-tag" data-value="hybrid">混合模式</span>
+                    </div>
+                </div>
+
+                <!-- 软件栈优化 -->
+                <div class="design-card" data-option="sw_opt" data-value="full_stack">
+                    <div class="card-header">
+                        <div class="card-icon">🔧</div>
+                        <div class="card-title">软件栈优化</div>
+                    </div>
+                    <div class="card-content">
+                        从Python调度优化到JIT编译，从PyTorch dispatch优化到kernel批处理，全栈协同消除CPU瓶颈。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="minimal">驱动层</span>
+                        <span class="option-tag" data-value="framework">框架层</span>
+                        <span class="option-tag primary" data-value="full_stack">全栈优化</span>
+                    </div>
+                </div>
+
+                <!-- 生态兼容性 -->
+                <div class="design-card" data-option="ecosystem" data-value="hybrid">
+                    <div class="card-header">
+                        <div class="card-icon">🌐</div>
+                        <div class="card-title">生态兼容性策略</div>
+                    </div>
+                    <div class="card-content">
+                        Grace初期遭遇TensorRT-LLM不支持arm64等问题。经过两年生态建设，Arm数据中心软件生态已大幅改善。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="arm_native">ARM原生</span>
+                        <span class="option-tag primary" data-value="hybrid">混合部署</span>
+                        <span class="option-tag" data-value="translation">二进制翻译</span>
+                    </div>
+                </div>
+
+                <!-- 性能可观测性 -->
+                <div class="design-card" data-option="observability" data-value="unified">
+                    <div class="card-header">
+                        <div class="card-icon">📊</div>
+                        <div class="card-title">性能可观测性</div>
+                    </div>
+                    <div class="card-content">
+                        统一的CPU-GPU协同性能分析工具，识别瓶颈并验证优化效果。关键是将CPU-GPU事件对齐到同一时间轴。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="separate">分离工具</span>
+                        <span class="option-tag primary" data-value="unified">统一视图</span>
+                        <span class="option-tag" data-value="ai">AI分析</span>
+                    </div>
+                </div>
+
+                <!-- 动态调优 -->
+                <div class="design-card" data-option="dynamic_tuning" data-value="enabled">
+                    <div class="card-header">
+                        <div class="card-icon">🎛️</div>
+                        <div class="card-title">运行时动态调优</div>
+                    </div>
+                    <div class="card-content">
+                        根据工作负载特征动态调整SMT模式、核心频率和功耗封顶。Vera支持运行时切换单/双线程模式。
+                    </div>
+                    <div class="options-list">
+                        <span class="option-tag" data-value="static">静态配置</span>
+                        <span class="option-tag primary" data-value="enabled">动态调优</span>
+                        <span class="option-tag" data-value="predictive">预测性调优</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 技术详情 -->
+            <div class="tech-detail">
+                <div class="tech-detail-title">
+                    <span>💡</span>
+                    <span>软硬件协同技术细节</span>
+                </div>
+                <div class="tech-detail-content">
+                    <p><strong>CPU瓶颈的具体表现：</strong>在GB200上，Grace的kernel launch开销约为x86 Xeon的2倍。Blackwell GPU算力提升2.5倍后，CPU端"掩盖"GPU kernel间隙的时间急剧缩短，使瓶颈更加明显。</p>
+                    <p><strong>NUMA绑定的收益：</strong>DeepSeek-V3通过bindpcie将进程绑定到本地GPU，获得从691到762 TFLOPS的提升（+70.6 TFLOPS）。这包含消除跨C2C延迟和确保核心能boost到最高频率的双重收益。</p>
+                    <p><strong>软件栈的分层优化：</strong>应用层减少Python开销，框架层优化dispatch逻辑，驱动层实现kernel批处理和流水线。每层优化收益可叠加，但需要端到端的性能分析工具验证。</p>
+                </div>
+            </div>
+
+            <!-- 软硬件协同流程图 -->
+            <div class="architecture-diagram">
+                <div class="arch-box">
+                    <div class="arch-icon">📈</div>
+                    <div class="arch-label">识别瓶颈</div>
+                    <div class="arch-desc">性能剖析<br>热点定位<br>关联分析</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-box">
+                    <div class="arch-icon">🎯</div>
+                    <div class="arch-label">优化调度</div>
+                    <div class="arch-desc">NUMA感知<br>进程绑定<br>负载均衡</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-box">
+                    <div class="arch-icon">⚙️</div>
+                    <div class="arch-label">软件优化</div>
+                    <div class="arch-desc">JIT编译<br>批处理<br>流水线</div>
+                </div>
+                <div class="arch-arrow">→</div>
+                <div class="arch-box highlight">
+                    <div class="arch-icon">✅</div>
+                    <div class="arch-label">持续监控</div>
+                    <div class="arch-desc">反馈闭环<br>动态调优<br>迭代优化</div>
+                </div>
+            </div>
+
+            <!-- 优化收益对比 -->
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>优化类别</th>
+                        <th>具体措施</th>
+                        <th>性能提升</th>
+                        <th>复杂度</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>CPU硬件</td>
+                        <td>Vera 1.5x IPC, FP8, 神经预测</td>
+                        <td class="highlight">1.5-2x</td>
+                        <td>高（芯片设计）</td>
+                    </tr>
+                    <tr>
+                        <td>NUMA绑定</td>
+                        <td>bindpcie进程-GPU绑定</td>
+                        <td class="highlight">+10%</td>
+                        <td>低</td>
+                    </tr>
+                    <tr>
+                        <td>SMT优化</td>
+                        <td>空间多线程</td>
+                        <td class="highlight">2x线程数</td>
+                        <td>中</td>
+                    </tr>
+                    <tr>
+                        <td>软件栈</td>
+                        <td>Python调度, JIT, 批处理</td>
+                        <td class="highlight">+20-30%</td>
+                        <td>中</td>
+                    </tr>
+                    <tr>
+                        <td>内存带宽</td>
+                        <td>SOCAMM, 大缓存</td>
+                        <td class="highlight">2.4x带宽</td>
+                        <td>高</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <button class="drill-down-btn secondary" onclick="navigateToLevel(2)">
+                ← 返回CPU维度
+            </button>
+        </div>
+    </main>
+
+    <!-- Toast通知 -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // 全局配置状态
+        let currentLevel = 0;
+        const totalLevels = 4;
+        let config = {
+            // 系统维度
+            cpu_gpu_ratio: '1:2',
+            rack_density: '36kW',
+            layer_arch: 'unified',
+            interconnect: 'nvlink',
+            mem_arch: 'cxl',
+            deploy_mode: 'ai_factory',
+            agentCount: 10000,
+            // SoC维度
+            core_arch: 'custom',
+            cache_config: 'large',
+            noc_arch: 'monolithic',
+            memory_type: 'socamm',
+            io_config: 'high',
+            process: '3nm',
+            // CPU维度
+            smt_mode: 'spatial',
+            isa_ext: 'fp8',
+            branch_pred: 'neural',
+            frontend_width: '10',
+            accelerators: 'full',
+            freq_strategy: 'aggressive',
+            smtValue: 2,
+            // 软硬协同
+            bottleneck_opt: 'aggressive',
+            numa_aware: 'auto',
+            sw_opt: 'full_stack',
+            ecosystem: 'hybrid',
+            observability: 'unified',
+            dynamic_tuning: 'enabled'
+        };
+
+        // 权重配置（用于计算得分）
+        const weights = {
+            performance: {
+                cpu_gpu_ratio: { '1:4': 90, '1:2': 85, '1:1': 75, 'cpu-only': 60 },
+                rack_density: { '20kW': 70, '36kW': 85, 'liquid': 95 },
+                core_arch: { 'stock': 70, 'custom': 95, 'hybrid': 80 },
+                cache_config: { 'small': 65, 'large': 90, 'adaptive': 85 },
+                frontend_width: { '6': 70, '8': 85, '10': 95 },
+                smt_mode: { 'none': 60, 'temporal': 75, 'spatial': 90 }
+            },
+            efficiency: {
+                cpu_gpu_ratio: { '1:4': 95, '1:2': 85, '1:1': 80, 'cpu-only': 90 },
+                rack_density: { '20kW': 90, '36kW': 80, 'liquid': 75 },
+                process: { '5nm': 75, '3nm': 90, '2nm': 85 },
+                memory_type: { 'ddr5': 80, 'socamm': 95, 'hbm': 70 },
+                freq_strategy: { 'efficient': 95, 'balanced': 80, 'aggressive': 65 }
+            },
+            cost: {
+                core_arch: { 'stock': 85, 'custom': 55, 'hybrid': 70 },
+                process: { '5nm': 90, '3nm': 70, '2nm': 50 },
+                memory_type: { 'ddr5': 85, 'socamm': 75, 'hbm': 50 },
+                rack_density: { '20kW': 90, '36kW': 75, 'liquid': 60 }
+            }
+        };
+
+        // 预设配置
+        const presets = {
+            nvidia: {
+                cpu_gpu_ratio: '1:2',
+                rack_density: 'liquid',
+                core_arch: 'custom',
+                cache_config: 'large',
+                noc_arch: 'monolithic',
+                memory_type: 'socamm',
+                frontend_width: '10',
+                smt_mode: 'spatial',
+                isa_ext: 'fp8',
+                branch_pred: 'neural',
+                bottleneck_opt: 'aggressive',
+                numa_aware: 'auto'
+            },
+            arm: {
+                cpu_gpu_ratio: '1:1',
+                rack_density: '36kW',
+                core_arch: 'stock',
+                cache_config: 'large',
+                noc_arch: 'chiplet',
+                memory_type: 'ddr5',
+                frontend_width: '8',
+                smt_mode: 'spatial',
+                isa_ext: 'bf16',
+                branch_pred: 'dynamic',
+                bottleneck_opt: 'aggressive',
+                numa_aware: 'auto'
+            },
+            balanced: {
+                cpu_gpu_ratio: '1:2',
+                rack_density: '36kW',
+                core_arch: 'hybrid',
+                cache_config: 'large',
+                noc_arch: 'monolithic',
+                memory_type: 'socamm',
+                frontend_width: '8',
+                smt_mode: 'spatial',
+                isa_ext: 'fp8',
+                branch_pred: 'neural',
+                bottleneck_opt: 'aggressive',
+                numa_aware: 'auto'
+            }
+        };
+
+        // 计算得分
+        function calculateScores() {
+            let perfScore = 0, effScore = 0, costScore = 0;
+            let perfCount = 0, effCount = 0, costCount = 0;
+
+            for (const [key, value] of Object.entries(config)) {
+                if (weights.performance[key] && weights.performance[key][value] !== undefined) {
+                    perfScore += weights.performance[key][value];
+                    perfCount++;
+                }
+                if (weights.efficiency[key] && weights.efficiency[key][value] !== undefined) {
+                    effScore += weights.efficiency[key][value];
+                    effCount++;
+                }
+                if (weights.cost[key] && weights.cost[key][value] !== undefined) {
+                    costScore += weights.cost[key][value];
+                    costCount++;
+                }
+            }
+
+            // Agent数量影响（密度越高，性能分越高，成本分越低）
+            const agentFactor = config.agentCount / 10000;
+            perfScore = Math.round((perfScore / perfCount) * (0.9 + agentFactor * 0.1));
+            effScore = Math.round((effScore / effCount) * (1.1 - agentFactor * 0.1));
+            costScore = Math.round((costScore / costCount) * (0.8 + agentFactor * 0.2));
+
+            return { perfScore, effScore, costScore };
+        }
+
+        // 绘制雷达图
+        function drawRadarChart(scores) {
+            const canvas = document.getElementById('radarChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const radius = Math.min(centerX, centerY) - 40;
+
+            // 清空画布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 数据维度
+            const dimensions = ['性能', '能效', '成本'];
+            const values = [scores.perfScore, scores.effScore, scores.costScore];
+            const colors = ['#00d4ff', '#10b981', '#f59e0b'];
+
+            // 绘制背景网格（同心三角形）
+            ctx.strokeStyle = '#374151';
+            ctx.lineWidth = 1;
+            for (let i = 1; i <= 5; i++) {
+                ctx.beginPath();
+                const r = (radius / 5) * i;
+                for (let j = 0; j <= 3; j++) {
+                    const angle = (j * 2 * Math.PI / 3) - Math.PI / 2;
+                    const x = centerX + r * Math.cos(angle);
+                    const y = centerY + r * Math.sin(angle);
+                    if (j === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+                ctx.closePath();
+                ctx.stroke();
+            }
+
+            // 绘制轴线
+            for (let i = 0; i < 3; i++) {
+                const angle = (i * 2 * Math.PI / 3) - Math.PI / 2;
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.lineTo(centerX + radius * Math.cos(angle), centerY + radius * Math.sin(angle));
+                ctx.stroke();
+
+                // 绘制标签
+                const labelX = centerX + (radius + 20) * Math.cos(angle);
+                const labelY = centerY + (radius + 20) * Math.sin(angle);
+                ctx.fillStyle = '#9ca3af';
+                ctx.font = '12px SF Pro Display, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(dimensions[i], labelX, labelY);
+            }
+
+            // 绘制数据区域（带渐变填充）
+            ctx.beginPath();
+            for (let i = 0; i < 3; i++) {
+                const angle = (i * 2 * Math.PI / 3) - Math.PI / 2;
+                const value = values[i] / 100;
+                const x = centerX + radius * value * Math.cos(angle);
+                const y = centerY + radius * value * Math.sin(angle);
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            }
+            ctx.closePath();
+
+            // 渐变填充
+            const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
+            gradient.addColorStop(0, 'rgba(0, 212, 255, 0.3)');
+            gradient.addColorStop(1, 'rgba(168, 85, 247, 0.1)');
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            // 绘制数据边界线
+            ctx.strokeStyle = 'rgba(0, 212, 255, 0.8)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 绘制数据点
+            for (let i = 0; i < 3; i++) {
+                const angle = (i * 2 * Math.PI / 3) - Math.PI / 2;
+                const value = values[i] / 100;
+                const x = centerX + radius * value * Math.cos(angle);
+                const y = centerY + radius * value * Math.sin(angle);
+
+                // 外圈光晕
+                ctx.beginPath();
+                ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                ctx.fillStyle = colors[i] + '40';
+                ctx.fill();
+
+                // 内圈实心点
+                ctx.beginPath();
+                ctx.arc(x, y, 4, 0, 2 * Math.PI);
+                ctx.fillStyle = colors[i];
+                ctx.fill();
+
+                // 显示数值
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 11px SF Pro Display, sans-serif';
+                ctx.fillText(values[i], x, y - 12);
+            }
+        }
+
+        // 更新显示
+        function updateDisplay() {
+            const scores = calculateScores();
+
+            // 更新得分显示
+            document.getElementById('perfScore').textContent = scores.perfScore;
+            document.getElementById('perfFill').style.width = scores.perfScore + '%';
+
+            document.getElementById('effScore').textContent = scores.effScore;
+            const effFill = document.getElementById('effFill');
+            effFill.style.width = scores.effScore + '%';
+            effFill.className = 'perf-card-fill' + (scores.effScore >= 80 ? ' good' : scores.effScore >= 60 ? '' : ' warning');
+
+            document.getElementById('costScore').textContent = scores.costScore;
+            const costFill = document.getElementById('costFill');
+            costFill.style.width = scores.costScore + '%';
+            costFill.className = 'perf-card-fill' + (scores.costScore >= 80 ? ' good' : scores.costScore >= 60 ? ' warning' : ' critical');
+
+            // 更新配置摘要
+            const summary = document.getElementById('configSummary');
+            summary.innerHTML = `
+                <div class="summary-item"><span class="summary-label">CPU-GPU配比</span><span class="summary-value">${config.cpu_gpu_ratio}</span></div>
+                <div class="summary-item"><span class="summary-label">机架密度</span><span class="summary-value">${config.rack_density}</span></div>
+                <div class="summary-item"><span class="summary-label">核心架构</span><span class="summary-value">${config.core_arch === 'custom' ? '自研' : config.core_arch === 'stock' ? '公版' : '混合'}</span></div>
+                <div class="summary-item"><span class="summary-label">内存类型</span><span class="summary-value">${config.memory_type.toUpperCase()}</span></div>
+                <div class="summary-item"><span class="summary-label">SMT模式</span><span class="summary-value">${config.smt_mode === 'spatial' ? '空间' : config.smt_mode === 'temporal' ? '传统' : '无'}</span></div>
+                <div class="summary-item"><span class="summary-label">前端宽度</span><span class="summary-value">${config.frontend_width}-wide</span></div>
+                <div class="summary-item"><span class="summary-label">Agent并发</span><span class="summary-value">${config.agentCount.toLocaleString()}</span></div>
+                <div class="summary-item"><span class="summary-label">NUMA调度</span><span class="summary-value">${config.numa_aware === 'auto' ? '自动' : '手动'}</span></div>
+            `;
+
+            // 绘制雷达图
+            drawRadarChart(scores);
+
+            // 保存到localStorage
+            localStorage.setItem('agiCpuConfig', JSON.stringify(config));
+        }
+
+        // 导航到指定层级
+        function navigateToLevel(level) {
+            if (level < 0 || level >= totalLevels) return;
+
+            document.getElementById(`level-${currentLevel}`).classList.remove('active');
+
+            setTimeout(() => {
+                document.getElementById(`level-${level}`).classList.add('active');
+            }, 100);
+
+            updateNavigation(level);
+            currentLevel = level;
+
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // 更新导航状态
+        function updateNavigation(level) {
+            document.querySelectorAll('.level-dot').forEach((dot, index) => {
+                dot.classList.remove('active', 'completed');
+                if (index === level) {
+                    dot.classList.add('active');
+                } else if (index < level) {
+                    dot.classList.add('completed');
+                }
+            });
+
+            document.querySelectorAll('.nav-item').forEach((item, index) => {
+                item.classList.toggle('active', index === level);
+            });
+        }
+
+        // 切换配置面板
+        function toggleConfigPanel() {
+            const panel = document.getElementById('configPanel');
+            const container = document.getElementById('mainContainer');
+            panel.classList.toggle('open');
+            container.classList.toggle('with-panel');
+        }
+
+        // 应用预设
+        function applyPreset(preset) {
+            Object.assign(config, presets[preset]);
+            updateCardSelection();
+            updateDisplay();
+
+            document.querySelectorAll('.preset-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.textContent.toLowerCase().includes(preset) ||
+                    (preset === 'balanced' && btn.textContent.includes('均衡'))) {
+                    btn.classList.add('active');
+                }
+            });
+
+            showToast(`已应用${preset === 'nvidia' ? 'NVIDIA' : preset === 'arm' ? 'Arm' : '均衡'}风格配置`, 'success');
+        }
+
+        // 更新卡片选择状态
+        function updateCardSelection() {
+            document.querySelectorAll('.design-card').forEach(card => {
+                const option = card.dataset.option;
+                const value = config[option];
+                if (value) {
+                    card.classList.remove('selected');
+                    card.querySelectorAll('.option-tag').forEach(tag => {
+                        tag.classList.remove('selected', 'primary');
+                        if (tag.dataset.value === value) {
+                            tag.classList.add('selected');
+                            card.classList.add('selected');
+                        }
+                    });
+                }
+            });
+        }
+
+        // 重置配置
+        function resetConfig() {
+            applyPreset('balanced');
+            config.agentCount = 10000;
+            document.getElementById('agentSlider').value = 10000;
+            document.getElementById('agentCount').textContent = '10000';
+            config.smtValue = 2;
+            document.getElementById('smtSlider').value = 2;
+            document.getElementById('smtValue').textContent = '2';
+            updateDisplay();
+            showToast('配置已重置', 'success');
+        }
+
+        // 导出配置
+        function exportConfig(format) {
+            if (format === 'json') {
+                const dataStr = JSON.stringify(config, null, 2);
+                const blob = new Blob([dataStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'agi_cpu_config.json';
+                a.click();
+                URL.revokeObjectURL(url);
+                showToast('配置已导出为JSON', 'success');
+            } else if (format === 'url') {
+                const compressed = btoa(JSON.stringify(config));
+                const url = `${window.location.origin}${window.location.pathname}?config=${compressed}`;
+                navigator.clipboard.writeText(url).then(() => {
+                    showToast('分享链接已复制到剪贴板', 'success');
+                });
+            }
+        }
+
+        // 显示Toast
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type} show`;
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // 加载保存的配置
+        function loadSavedConfig() {
+            const saved = localStorage.getItem('agiCpuConfig');
+            if (saved) {
+                try {
+                    Object.assign(config, JSON.parse(saved));
+                    updateCardSelection();
+                } catch (e) {
+                    console.error('Failed to load saved config');
+                }
+            }
+
+            // 检查URL中的配置
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlConfig = urlParams.get('config');
+            if (urlConfig) {
+                try {
+                    Object.assign(config, JSON.parse(atob(urlConfig)));
+                    updateCardSelection();
+                    showToast('已从链接加载配置', 'success');
+                } catch (e) {
+                    console.error('Failed to load URL config');
+                }
+            }
+        }
+
+        // 初始化事件绑定
+        function initEvents() {
+            // 导航事件
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const level = parseInt(item.dataset.level);
+                    navigateToLevel(level);
+                });
+            });
+
+            // 选项点击事件
+            document.querySelectorAll('.option-tag').forEach(tag => {
+                tag.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const card = tag.closest('.design-card');
+                    const option = card.dataset.option;
+                    const value = tag.dataset.value;
+
+                    // 更新配置
+                    config[option] = value;
+
+                    // 更新UI
+                    card.querySelectorAll('.option-tag').forEach(t => {
+                        t.classList.remove('selected', 'primary');
+                    });
+                    tag.classList.add('selected');
+
+                    updateDisplay();
+                });
+            });
+
+            // 滑块事件
+            document.getElementById('agentSlider').addEventListener('input', (e) => {
+                config.agentCount = parseInt(e.target.value);
+                document.getElementById('agentCount').textContent = config.agentCount.toLocaleString();
+                updateDisplay();
+            });
+
+            document.getElementById('smtSlider').addEventListener('input', (e) => {
+                config.smtValue = parseInt(e.target.value);
+                document.getElementById('smtValue').textContent = config.smtValue;
+                updateDisplay();
+            });
+
+            // 键盘导航
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+                    navigateToLevel(Math.min(currentLevel + 1, totalLevels - 1));
+                } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+                    navigateToLevel(Math.max(currentLevel - 1, 0));
+                }
+            });
+
+            // 触摸手势
+            let touchStartX = 0;
+            let touchStartY = 0;
+
+            document.addEventListener('touchstart', (e) => {
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+            });
+
+            document.addEventListener('touchend', (e) => {
+                const touchEndX = e.changedTouches[0].clientX;
+                const touchEndY = e.changedTouches[0].clientY;
+                const diffX = touchEndX - touchStartX;
+                const diffY = touchEndY - touchStartY;
+
+                if (Math.abs(diffX) > 100 || Math.abs(diffY) > 100) {
+                    if (diffX > 0 || diffY > 0) {
+                        navigateToLevel(Math.max(currentLevel - 1, 0));
+                    } else {
+                        navigateToLevel(Math.min(currentLevel + 1, totalLevels - 1));
+                    }
+                }
+            });
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadSavedConfig();
+            initEvents();
+            updateCardSelection();
+            updateDisplay();
+            updateNavigation(0);
+        });
+    </script>
+</body>
+</html>

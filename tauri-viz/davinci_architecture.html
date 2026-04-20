@@ -1,0 +1,2051 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Davinci OoO Processor Architecture</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+    mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        themeVariables: {
+            darkMode: true,
+            background: '#0a0e1a',
+            primaryColor: '#1a2233',
+            primaryTextColor: '#f1f5f9',
+            primaryBorderColor: '#00d4ff',
+            lineColor: '#64748b',
+            secondaryColor: '#111827',
+            tertiaryColor: '#243044',
+            fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+            fontSize: '13px',
+            nodeBorder: '#00d4ff',
+            clusterBkg: '#111827',
+            clusterBorder: '#2d3a4f'
+        },
+        flowchart: { htmlLabels: true, curve: 'basis', useMaxWidth: true }
+    });
+    </script>
+    <style>
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: #1a2233;
+            --bg-card-hover: #243044;
+            --accent-cyan: #00d4ff;
+            --accent-orange: #f59e0b;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-purple: #a855f7;
+            --accent-blue: #3b82f6;
+            --accent-teal: #14b8a6;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border-color: #2d3a4f;
+            --shadow-glow: 0 0 30px rgba(0, 212, 255, 0.15);
+        }
+        body {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow-x: hidden;
+            line-height: 1.7;
+        }
+        .grid-bg {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-image: linear-gradient(rgba(0,212,255,0.025) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(0,212,255,0.025) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none; z-index: 0;
+        }
+        .glow-orb { position: fixed; border-radius: 50%; filter: blur(120px); opacity: 0.2; pointer-events: none; z-index: 0; }
+        .glow-orb-1 { width: 500px; height: 500px; background: var(--accent-cyan); top: -150px; right: -150px; animation: gf1 9s ease-in-out infinite; }
+        .glow-orb-2 { width: 400px; height: 400px; background: var(--accent-orange); bottom: -100px; left: -100px; animation: gf2 11s ease-in-out infinite; }
+        .glow-orb-3 { width: 300px; height: 300px; background: var(--accent-purple); top: 40%; left: 40%; animation: gf3 13s ease-in-out infinite; opacity: 0.1; }
+        @keyframes gf1 { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(-40px,40px) scale(1.1)} }
+        @keyframes gf2 { 0%,100%{transform:translate(0,0) scale(1)} 50%{transform:translate(50px,-50px) scale(1.15)} }
+        @keyframes gf3 { 0%,100%{transform:translate(-50%,-50%) scale(1)} 50%{transform:translate(-40%,-60%) scale(1.2)} }
+        .header {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+            background: rgba(10,14,26,0.96); backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0 2rem; height: 64px;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .header h1 {
+            font-size: 1.15rem; font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .nav-tabs { display: flex; gap: 4px; }
+        .nav-tab {
+            padding: 8px 18px; border-radius: 8px; cursor: pointer;
+            font-size: 0.85rem; font-weight: 500; color: var(--text-secondary);
+            border: 1px solid transparent; transition: all 0.25s;
+            background: transparent;
+        }
+        .nav-tab:hover { color: var(--text-primary); background: rgba(255,255,255,0.05); }
+        .nav-tab.active {
+            color: var(--accent-cyan); background: rgba(0,212,255,0.1);
+            border-color: rgba(0,212,255,0.3);
+        }
+        main {
+            position: relative; z-index: 1; max-width: 1400px;
+            margin: 0 auto; padding: 84px 2rem 4rem;
+        }
+        .page { display: none; animation: fadeInUp 0.4s ease; }
+        .page.active { display: block; }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .section-title {
+            font-size: 1.6rem; font-weight: 700; margin: 2.5rem 0 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--accent-cyan);
+            display: inline-block;
+        }
+        .section-desc {
+            color: var(--text-secondary); font-size: 0.95rem; margin-bottom: 1.5rem;
+            max-width: 900px; line-height: 1.8;
+        }
+        .card {
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem;
+            transition: all 0.3s;
+        }
+        .card:hover { border-color: rgba(0,212,255,0.3); box-shadow: var(--shadow-glow); transform: translateY(-2px); }
+        .card h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--accent-cyan); }
+        .card h4 { font-size: 0.95rem; font-weight: 600; margin: 0.75rem 0 0.5rem; color: var(--accent-orange); }
+        .card p, .card li { color: var(--text-secondary); font-size: 0.9rem; line-height: 1.7; }
+        .card ul { padding-left: 1.2rem; margin: 0.5rem 0; }
+        .card li { margin-bottom: 0.3rem; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+        .stat-card {
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            border-radius: 12px; padding: 1.2rem; text-align: center;
+            transition: all 0.3s;
+        }
+        .stat-card:hover { border-color: var(--accent-cyan); box-shadow: var(--shadow-glow); }
+        .stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: var(--accent-cyan); }
+        .stat-card .stat-label { font-size: 0.78rem; color: var(--text-secondary); margin-top: 0.3rem; }
+        table {
+            width: 100%; border-collapse: collapse; margin: 1rem 0;
+            font-size: 0.85rem;
+        }
+        th, td {
+            padding: 8px 12px; text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+        th {
+            background: rgba(0,212,255,0.08); color: var(--accent-cyan);
+            font-weight: 600; font-size: 0.8rem; text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        td { color: var(--text-secondary); }
+        tr:hover td { background: rgba(255,255,255,0.02); }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+        .tag-cyan { background: rgba(0,212,255,0.15); color: var(--accent-cyan); }
+        .tag-orange { background: rgba(245,158,11,0.15); color: var(--accent-orange); }
+        .tag-green { background: rgba(16,185,129,0.15); color: var(--accent-green); }
+        .tag-red { background: rgba(239,68,68,0.15); color: var(--accent-red); }
+        .tag-purple { background: rgba(168,85,247,0.15); color: var(--accent-purple); }
+        .tag-blue { background: rgba(59,130,246,0.15); color: var(--accent-blue); }
+        .tag-teal { background: rgba(20,184,166,0.15); color: var(--accent-teal); }
+        .arch-diagram {
+            background: rgba(0,0,0,0.3); border: 1px solid var(--border-color);
+            border-radius: 12px; padding: 1.5rem; margin: 1rem 0;
+            overflow-x: auto; font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.72rem; line-height: 1.4; color: var(--text-secondary);
+            white-space: pre;
+        }
+        .highlight-box {
+            background: rgba(0,212,255,0.06); border-left: 3px solid var(--accent-cyan);
+            padding: 1rem 1.5rem; margin: 1rem 0; border-radius: 0 8px 8px 0;
+        }
+        .highlight-box p { color: var(--text-secondary); font-size: 0.9rem; }
+        .highlight-box strong { color: var(--accent-cyan); }
+        .warn-box {
+            background: rgba(245,158,11,0.06); border-left: 3px solid var(--accent-orange);
+            padding: 1rem 1.5rem; margin: 1rem 0; border-radius: 0 8px 8px 0;
+        }
+        .warn-box p { color: var(--text-secondary); font-size: 0.9rem; }
+        .warn-box strong { color: var(--accent-orange); }
+        .pro-con-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+        .pro-card { background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.2); border-radius: 10px; padding: 1rem; }
+        .pro-card h4 { color: var(--accent-green); margin-bottom: 0.5rem; }
+        .con-card { background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.2); border-radius: 10px; padding: 1rem; }
+        .con-card h4 { color: var(--accent-red); margin-bottom: 0.5rem; }
+        .pro-card li, .con-card li { font-size: 0.85rem; margin-bottom: 0.4rem; }
+        .score-bar { height: 8px; background: var(--border-color); border-radius: 4px; overflow: hidden; margin: 0.5rem 0; }
+        .score-fill { height: 100%; border-radius: 4px; transition: width 1s ease; }
+        .calc-input {
+            background: var(--bg-secondary); border: 1px solid var(--border-color);
+            color: var(--text-primary); padding: 8px 12px; border-radius: 6px;
+            font-size: 0.9rem; width: 100px; outline: none;
+        }
+        .calc-input:focus { border-color: var(--accent-cyan); }
+        .calc-select {
+            background: var(--bg-secondary); border: 1px solid var(--border-color);
+            color: var(--text-primary); padding: 8px 12px; border-radius: 6px;
+            font-size: 0.9rem; outline: none; cursor: pointer;
+        }
+        .calc-btn {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            color: #fff; border: none; padding: 10px 24px; border-radius: 8px;
+            font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: all 0.3s;
+        }
+        .calc-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(0,212,255,0.3); }
+        .calc-result {
+            background: rgba(0,212,255,0.06); border: 1px solid rgba(0,212,255,0.2);
+            border-radius: 10px; padding: 1rem; margin-top: 1rem;
+        }
+        .calc-result .result-value { font-size: 1.4rem; font-weight: 700; color: var(--accent-cyan); }
+        .calc-result .result-label { font-size: 0.8rem; color: var(--text-secondary); }
+        .mode-toggle { display: flex; gap: 4px; margin: 1rem 0; }
+        .mode-btn {
+            padding: 8px 20px; border-radius: 8px; cursor: pointer;
+            font-size: 0.85rem; font-weight: 600; border: 1px solid var(--border-color);
+            background: var(--bg-card); color: var(--text-secondary); transition: all 0.25s;
+        }
+        .mode-btn.active { background: rgba(0,212,255,0.15); border-color: var(--accent-cyan); color: var(--accent-cyan); }
+        .pipeline-row { display: flex; align-items: center; gap: 2px; margin: 2px 0; flex-wrap: wrap; }
+        .pipeline-stage {
+            padding: 6px 10px; border-radius: 4px; font-size: 0.75rem;
+            font-weight: 600; text-align: center; min-width: 50px;
+            transition: all 0.3s;
+        }
+        .pipeline-stage.fetch { background: rgba(59,130,246,0.2); color: #60a5fa; }
+        .pipeline-stage.decode { background: rgba(168,85,247,0.2); color: #c084fc; }
+        .pipeline-stage.rename { background: rgba(168,85,247,0.15); color: #a78bfa; }
+        .pipeline-stage.dispatch { background: rgba(245,158,11,0.2); color: #fbbf24; }
+        .pipeline-stage.issue { background: rgba(20,184,166,0.2); color: #2dd4bf; }
+        .pipeline-stage.execute { background: rgba(16,185,129,0.2); color: #34d399; }
+        .pipeline-stage.wb { background: rgba(0,212,255,0.2); color: #22d3ee; }
+        .pipeline-stage.active { transform: scale(1.08); box-shadow: 0 0 12px rgba(0,212,255,0.4); }
+        .mermaid-container {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            overflow-x: auto;
+            text-align: center;
+        }
+        .mermaid-container svg {
+            max-width: 100%;
+            height: auto;
+        }
+        .diagram-explanation {
+            background: rgba(0,212,255,0.04);
+            border: 1px solid rgba(0,212,255,0.15);
+            border-radius: 10px;
+            padding: 1rem 1.5rem;
+            margin: 1rem 0;
+        }
+        .diagram-explanation h4 {
+            color: var(--accent-cyan);
+            margin-bottom: 0.5rem;
+            font-size: 0.95rem;
+        }
+        .diagram-explanation p,
+        .diagram-explanation li {
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+            line-height: 1.8;
+        }
+        .diagram-explanation ul {
+            padding-left: 1.2rem;
+            margin: 0.3rem 0;
+        }
+        .diagram-explanation strong {
+            color: var(--text-primary);
+        }
+        .epoch-canvas-wrap {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            text-align: center;
+        }
+        .epoch-controls {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            margin: 1rem 0 0.5rem;
+        }
+        .epoch-btn {
+            padding: 6px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            font-weight: 600;
+            border: 1px solid var(--border-color);
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            transition: all 0.25s;
+        }
+        .epoch-btn:hover, .epoch-btn.active {
+            background: rgba(0,212,255,0.15);
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+        @media (max-width: 900px) {
+            .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+            .pro-con-grid { grid-template-columns: 1fr; }
+            .nav-tabs { flex-wrap: wrap; }
+            .nav-tab { font-size: 0.75rem; padding: 6px 12px; }
+            main { padding: 74px 1rem 2rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="grid-bg"></div>
+    <div class="glow-orb glow-orb-1"></div>
+    <div class="glow-orb glow-orb-2"></div>
+    <div class="glow-orb glow-orb-3"></div>
+    <header class="header">
+        <h1>Davinci OoO Processor Architecture</h1>
+        <nav class="nav-tabs">
+            <div class="nav-tab active" onclick="navigateTo('overview')">概览</div>
+            <div class="nav-tab" onclick="navigateTo('pipeline')">流水线</div>
+            <div class="nav-tab" onclick="navigateTo('memory')">存储通路</div>
+            <div class="nav-tab" onclick="navigateTo('outercube')">outerCube</div>
+            <div class="nav-tab" onclick="navigateTo('evaluation')">架构评价</div>
+        </nav>
+    </header>
+<main>
+
+    <div class="page active" id="page-overview">
+        <h2 class="section-title">Davinci 核心概览</h2>
+        <p class="section-desc">
+            Davinci 是一款单线程、4 宽、乱序处理器核，面向 AI 推理、HPC 和密集线性代数工作负载设计。
+            它执行统一的指令流，包含四个指令域——<strong>标量 (Scalar)</strong>、<strong>向量 (Vector)</strong>、
+            <strong>矩阵 (Cube)</strong> 和 <strong>内存 Tile 引擎 (MTE)</strong>——共享流水线前端，分布式后端执行单元。
+            该核不支持精确中断或异常，仅执行 run-to-completion 内核，从而消除了重排序缓冲区 (ROB) 和顺序退休，
+            产生更简单、更低功耗的 OoO 引擎，等价于 Tomasulo 原始算法（IBM 360/91, 1967）。
+        </p>
+        <div class="grid-4">
+            <div class="stat-card"><div class="stat-value">&ge;1.5 GHz</div><div class="stat-label">时钟频率 (5nm)</div></div>
+            <div class="stat-card"><div class="stat-value">12.3 TFLOPS</div><div class="stat-label">FP16 峰值吞吐</div></div>
+            <div class="stat-card"><div class="stat-value">98.3 TOPS</div><div class="stat-label">MXFP4 峰值吞吐</div></div>
+            <div class="stat-card"><div class="stat-value">1 MB</div><div class="stat-label">TRegFile-4K 容量</div></div>
+        </div>
+        <h3 class="section-title" style="margin-top:2rem">关键设计决策</h3>
+        <div class="grid-2">
+            <div class="card">
+                <h3>64-bit RISC 标量 ISA</h3>
+                <p>类似 ARM / RISC-V 风格的指令集，提供通用控制流和地址计算。</p>
+            </div>
+            <div class="card">
+                <h3>Cube ISA — 外积累积</h3>
+                <p>Tile 级外积累积指令驱动 outerCube MXU，硬件管理 K 循环。</p>
+            </div>
+            <div class="card">
+                <h3>统一 Tile 寄存器架构</h3>
+                <p>TRegFile-4K (1MB, 8R+8W) 作为向量、矩阵和 MTE 的统一物理寄存器。无独立 VRF。</p>
+            </div>
+            <div class="card">
+                <h3>无 ROB — 回归 Tomasulo 原始算法</h3>
+                <p>参考计数释放物理寄存器，无需顺序退休。RAT + Checkpoint 分支恢复。</p>
+            </div>
+        </div>
+        <h3 class="section-title">关键参数</h3>
+        <div style="overflow-x:auto">
+        <table>
+            <tr><th>参数</th><th>值</th></tr>
+            <tr><td>标量 ISA 位宽</td><td>64-bit RISC (ARM / RISC-V style)</td></tr>
+            <tr><td>架构 GPR</td><td>32 (X0–X31), 64-bit</td></tr>
+            <tr><td>物理 GPR</td><td>128 (P0–P127), 64-bit</td></tr>
+            <tr><td>架构 Tile 寄存器</td><td>32 (T0–T31), 每个 4 KB（向量、矩阵、MTE 共用）</td></tr>
+            <tr><td>物理 Tile 寄存器</td><td>256 (PT0–PT255) in TRegFile-4K</td></tr>
+            <tr><td>TRegFile-4K 容量</td><td>256 &times; 4 KB = <strong>1 MB</strong></td></tr>
+            <tr><td>取指/译码宽度</td><td>4 instructions / cycle</td></tr>
+            <tr><td>标量发射宽度</td><td>6 (4 ALU + 1 MUL/DIV + 1 Branch)</td></tr>
+            <tr><td>向量发射宽度</td><td>1 instruction / cycle</td></tr>
+            <tr><td>矩阵发射宽度</td><td>1 CUBE instruction / cycle</td></tr>
+            <tr><td>MTE 发射宽度</td><td>2 TILE.LD/ST per cycle</td></tr>
+            <tr><td>流水线深度（标量）</td><td>12 stages (fetch-to-writeback)，<strong>无 retire</strong></td></tr>
+            <tr><td>分支预测器</td><td>Hybrid TAGE + BTB + RAS</td></tr>
+            <tr><td>RAT Checkpoint</td><td>8 (最大在飞分支数)</td></tr>
+            <tr><td>保留站</td><td>Scalar: 32, LSU: 24, Vector: 16, Cube: 4, MTE: 16</td></tr>
+            <tr><td>L1-I Cache</td><td>64 KB, 4-way, 64 B line</td></tr>
+            <tr><td>L1-D Cache</td><td>64 KB, 4-way, 64 B line, non-blocking (8 MSHRs)</td></tr>
+            <tr><td>L2 Cache</td><td>512 KB, 8-way, 64 B line (core-private)</td></tr>
+            <tr><td>Cube MXU</td><td>4096 base MACs, 8 banks, dual-mode A/B</td></tr>
+            <tr><td>时钟目标</td><td>&ge; 1.5 GHz (5 nm)</td></tr>
+            <tr><td>FP16 峰值</td><td>12.3 TFLOPS</td></tr>
+            <tr><td>FP8 峰值</td><td>24.6 TOPS</td></tr>
+            <tr><td>MXFP4 峰值</td><td>98.3 TOPS</td></tr>
+            <tr><td>向量 ISA 指令数</td><td>95 条（13 类别）</td></tr>
+            <tr><td>Cube ISA 指令数</td><td>5 条 (CFG/OPA/DRAIN/ZERO/WAIT)</td></tr>
+            <tr><td>MTE ISA 指令数</td><td>12 条 (LD/ST/GATHER/SCATTER/MOVE/TRANSPOSE/GET/PUT 等)</td></tr>
+            <tr><td>估算核心面积 (5nm)</td><td>~3.26 mm&sup2;（TRegFile 占 37%）</td></tr>
+        </table>
+        </div>
+        <h3 class="section-title">统一指令流架构</h3>
+        <p class="section-desc">
+            Davinci 核心采用统一指令流设计，四个指令域共享前端流水线（取指、译码、重命名），
+            在派发阶段路由到域特定的保留站。这允许核心跨域利用指令级并行。
+        </p>
+        <div class="mermaid-container">
+        <pre class="mermaid">
+flowchart TB
+    subgraph FE["🧠 前端 FRONT-END"]
+        direction TB
+        BP["Branch Predictor<br/>TAGE + BTB + RAS"]
+        FU["Fetch Unit<br/>L1-I, 4-wide"]
+        IB["Instruction Buffer<br/>16 entries, 4-wide dequeue"]
+        DR["Decode + Rename 4-wide"]
+        SR["Scalar RAT<br/>32→128 GPR"]
+        TR["Tile RAT<br/>32→256 tiles"]
+        FL["Free Lists +<br/>Reference Count"]
+        CP["Checkpoint<br/>8 slots"]
+        BP --> FU --> IB --> DR
+        DR --> SR
+        DR --> TR
+        DR --> FL
+        DR --> CP
+    end
+
+    subgraph DE["⚡ 派发与执行 DISPATCH & EXECUTE"]
+        direction TB
+        SRS["Scalar RS<br/>32 entries"]
+        LRS["LSU RS<br/>24 entries"]
+        VRS["Vector RS<br/>16 entries"]
+        CRS["Cube RS<br/>4 entries"]
+        ALU["4× ALU + 1× MUL + 1× BRU"]
+        LSU["Load / Store Unit"]
+        VEC["Vector Unit<br/>512b datapath"]
+        MXU["outerCube MXU<br/>4096 MACs"]
+        SRS --> ALU
+        LRS --> LSU
+        VRS --> VEC
+        CRS --> MXU
+    end
+
+    subgraph Buses["📡 结果广播"]
+        CDB["CDB (6 ports)<br/>7-bit tag + 64-bit data"]
+        TCB["TCB (4 ports)<br/>8-bit tile tag only"]
+    end
+
+    subgraph RF["📦 寄存器堆 REGISTER FILES"]
+        GPR["Scalar Physical RF<br/>128 × 64b<br/>12R + 6W ports"]
+        TRF["TRegFile-4K<br/>256 × 4KB = 1 MB<br/>8R + 8W, 512B/cy/port"]
+    end
+
+    subgraph MEM["💾 存储子系统 MEMORY"]
+        L1I["L1-I Cache<br/>64 KB, 4-way"]
+        L1D["L1-D Cache<br/>64 KB, 4-way"]
+        L2C["L2 Cache<br/>512 KB, 8-way"]
+        NoC["External NoC"]
+    end
+
+    FE --> DE
+    ALU -.-> CDB
+    LSU -.-> CDB
+    VEC -.-> TCB
+    MXU -.-> TCB
+    CDB -.-> GPR
+    TCB -.-> TRF
+    CDB -.-> SRS
+    CDB -.-> LRS
+    TCB -.-> VRS
+    TCB -.-> CRS
+    L1I --> L2C --> NoC
+    L1D --> L2C
+        </pre>
+        </div>
+        <div class="diagram-explanation">
+            <h4>Davinci 核心架构总览</h4>
+            <p>上图展示了 Davinci 处理器的整体微架构，由四大子系统组成：</p>
+            <ul>
+                <li><strong>前端 (Front-End)</strong>：包含分支预测器（TAGE + BTB + RAS）、取指单元（4-wide, L1-I）、指令缓冲区（16 entries）和译码+重命名（4-wide）。双 RAT 分别映射标量寄存器（32→128）和 Tile 寄存器（32→256），通过 8-slot checkpoint 支持分支恢复。</li>
+                <li><strong>派发与执行</strong>：重命名后微操作按域路由到 5 个保留站（Scalar 32 / LSU 24 / Vector 16 / Cube 4 / MTE 16），每个 RS 独立发射。执行单元包含 6 个标量端口、LSU、512b 向量单元和 4096-MAC outerCube 矩阵单元。</li>
+                <li><strong>结果广播</strong>：CDB（6 端口）广播标量结果（7-bit tag + 64-bit data），TCB（4 端口）广播 Tile 完成信号（仅 8-bit tag，无 data payload，因为 Tile 数据直接写入 TRegFile）。</li>
+                <li><strong>寄存器堆与存储</strong>：标量物理 RF（128×64b）和 TRegFile-4K（256×4KB=1MB）分离。三级 cache（L1-I 64KB / L1-D 64KB / L2 512KB）层次通过 NoC 连接外部存储。</li>
+            </ul>
+        </div>
+        <h3 class="section-title">与 ARM SME 对比</h3>
+        <div style="overflow-x:auto">
+        <table>
+            <tr><th>参数</th><th>ARM SME (SVL=512b)</th><th>outerCube MXU</th></tr>
+            <tr><td>Base MAC units</td><td>256 (FP16)</td><td><strong>4096</strong> (FP16)</td></tr>
+            <tr><td>FP8 MACs/cycle</td><td>1024</td><td><strong>8192</strong></td></tr>
+            <tr><td>FP4 MACs/cycle</td><td>N/A</td><td><strong>32768</strong></td></tr>
+            <tr><td>Accumulator</td><td>Mixed (type-dependent)</td><td><strong>Always 32-bit (FP32)</strong></td></tr>
+            <tr><td>Banks</td><td>1</td><td><strong>8</strong></td></tr>
+            <tr><td>Output tile (FP16)</td><td>16&times;16</td><td><strong>8&times;64 / 64&times;64</strong></td></tr>
+            <tr><td>Formats</td><td>FP64–INT8</td><td><strong>FP16, BF16, FP8, MXFP4, HiFP4</strong></td></tr>
+            <tr><td>Dual-mode</td><td>N/A</td><td><strong>Mode A (K-parallel) / Mode B (M-parallel)</strong></td></tr>
+            <tr><td>Tile register file</td><td>ZA (streaming SVE)</td><td><strong>TRegFile-4K (256 &times; 4KB = 1MB)</strong></td></tr>
+        </table>
+        </div>
+        <h3 class="section-title">ISA 域识别</h3>
+        <p class="section-desc">32 位固定宽度编码中，opcode[6:5] 编码指令域：</p>
+        <table>
+            <tr><th>Opcode[6:5]</th><th>域</th><th>译码路径</th><th>指令数量</th></tr>
+            <tr><td><span class="tag tag-blue">00, 01</span></td><td>Scalar（标量）</td><td>Scalar RAT → Scalar RS</td><td>~30</td></tr>
+            <tr><td><span class="tag tag-purple">10</span></td><td>Vector / MTE</td><td>Tile RAT → Vector RS 或 MTE RS</td><td>95 + 12</td></tr>
+            <tr><td><span class="tag tag-orange">11</span></td><td>Cube（矩阵）</td><td>Tile RAT → Cube RS</td><td>5</td></tr>
+        </table>
+    </div>
+
+    <div class="page" id="page-pipeline">
+        <h2 class="section-title">流水线与微架构</h2>
+        <p class="section-desc">
+            Davinci 核心采用 12 级标量流水线，无 retire 阶段。所有指令域共享前端（F1–D2），
+            在派发（DS）阶段路由到域特定保留站，乱序发射（IS）和执行（EX1–EXn）。
+        </p>
+        <h3 class="section-title">12 级流水线可视化</h3>
+        <div id="pipeline-viz" style="margin:1rem 0">
+            <div class="pipeline-row">
+                <div class="pipeline-stage fetch" data-stage="0">F1</div>
+                <div style="color:var(--text-muted);font-size:1.2rem">→</div>
+                <div class="pipeline-stage fetch" data-stage="1">F2</div>
+                <div style="color:var(--text-muted);font-size:1.2rem">→</div>
+                <div class="pipeline-stage decode" data-stage="2">D1</div>
+                <div style="color:var(--text-muted);font-size:1.2rem">→</div>
+                <div class="pipeline-stage rename" data-stage="3">D2</div>
+                <div style="color:var(--text-muted);font-size:1.2rem">→</div>
+                <div class="pipeline-stage dispatch" data-stage="4">DS</div>
+                <div style="color:var(--text-muted);font-size:1.2rem">→</div>
+                <div class="pipeline-stage issue" data-stage="5">IS</div>
+                <div style="color:var(--text-muted);font-size:1.2rem">→</div>
+                <div class="pipeline-stage execute" data-stage="6">EX1</div>
+                <div style="color:var(--text-muted);font-size:1.2rem">→</div>
+                <div class="pipeline-stage execute" data-stage="7">EXn</div>
+                <div style="color:var(--text-muted);font-size:1.2rem">→</div>
+                <div class="pipeline-stage wb" data-stage="8">WB</div>
+                <div style="color:var(--accent-red);font-size:0.8rem;margin-left:8px">（无 Retire）</div>
+            </div>
+            <div style="margin-top:0.5rem;color:var(--text-muted);font-size:0.8rem">
+                <span style="color:#60a5fa">■ Fetch</span> &nbsp;
+                <span style="color:#c084fc">■ Decode/Rename</span> &nbsp;
+                <span style="color:#fbbf24">■ Dispatch</span> &nbsp;
+                <span style="color:#2dd4bf">■ Issue</span> &nbsp;
+                <span style="color:#34d399">■ Execute</span> &nbsp;
+                <span style="color:#22d3ee">■ Writeback</span>
+            </div>
+        </div>
+        <table>
+            <tr><th>Stage</th><th>名称</th><th>功能</th></tr>
+            <tr><td><span class="tag tag-blue">F1</span></td><td>Fetch-1</td><td>PC → L1-I cache + branch predictor (BTB lookup + TAGE index)</td></tr>
+            <tr><td><span class="tag tag-blue">F2</span></td><td>Fetch-2</td><td>接收 4 条指令 + TAGE 预测 + RAS 检查 → 推入指令缓冲区</td></tr>
+            <tr><td><span class="tag tag-purple">D1</span></td><td>Decode</td><td>4-wide 译码：域分类、立即数提取、分支检测</td></tr>
+            <tr><td><span class="tag tag-purple">D2</span></td><td>Rename</td><td>读双 RAT、分配物理寄存器、组内旁路、分支 checkpoint</td></tr>
+            <tr><td><span class="tag tag-orange">DS</span></td><td>Dispatch</td><td>分配 RS 条目、写入操作数 tag/data</td></tr>
+            <tr><td><span class="tag tag-teal">IS</span></td><td>Issue</td><td>oldest-first 选择就绪指令、读物理 RF</td></tr>
+            <tr><td><span class="tag tag-green">EX1–EXn</span></td><td>Execute</td><td>可变延迟：ALU=1cy, MUL=4cy, LD=4cy, VEC=16cy, CUBE=N+18</td></tr>
+            <tr><td><span class="tag tag-cyan">WB</span></td><td>Writeback</td><td>CDB 广播结果、写物理 RF、唤醒依赖 RS 条目</td></tr>
+        </table>
+
+        <h3 class="section-title">前端：取指与分支预测</h3>
+        <div class="grid-2">
+            <div class="card">
+                <h3>取指单元</h3>
+                <ul>
+                    <li>取指宽度：4 instructions / cycle (16 bytes)</li>
+                    <li>对齐方式：16-byte aligned fetch block</li>
+                    <li>指令缓冲区：16 entries（4 周期解耦）</li>
+                    <li>L1-I cache：64 KB, 4-way, 64 B line, 2-cycle latency</li>
+                    <li>I-TLB：64 entries, fully associative</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Fetch 重定向优先级</h3>
+                <ol style="color:var(--text-secondary);font-size:0.9rem;padding-left:1.5rem">
+                    <li><strong style="color:var(--accent-red)">分支误预测</strong>（EX1 触发）— flush + restart</li>
+                    <li><strong style="color:var(--accent-orange)">BTB/TAGE taken</strong>（F2 触发）— 下一周期重定向</li>
+                    <li><strong style="color:var(--text-muted)">顺序 PC+16</strong>（默认）</li>
+                </ol>
+            </div>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">TAGE 分支预测器</h4>
+        <table>
+            <tr><th>组件</th><th>参数</th></tr>
+            <tr><td>基础预测器</td><td>4K-entry bimodal (2-bit saturating counters)</td></tr>
+            <tr><td>Tagged tables</td><td>5 tables: T1(512), T2(512), T3(1K), T4(1K), T5(1K)</td></tr>
+            <tr><td>历史长度</td><td>4, 8, 16, 32, 64（几何级数）</td></tr>
+            <tr><td>Tag 宽度</td><td>8–12 bits per entry</td></tr>
+            <tr><td>总存储</td><td>~20 KB</td></tr>
+            <tr><td>预测准确率</td><td>~95% (典型工作负载)</td></tr>
+        </table>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">BTB 与 RAS</h4>
+        <div class="grid-2">
+            <div class="card">
+                <h4>Branch Target Buffer (BTB)</h4>
+                <ul>
+                    <li>Entries: 2048</li>
+                    <li>Associativity: 4-way set-associative</li>
+                    <li>Tag: partial PC (upper bits)</li>
+                    <li>Target: full 64-bit target address</li>
+                    <li>Hit latency: 1 cycle (end of F1)</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h4>Return Address Stack (RAS)</h4>
+                <ul>
+                    <li>Depth: 16 entries</li>
+                    <li>Push on JAL/JALR to link register</li>
+                    <li>Pop on JALR from link register (return pattern)</li>
+                    <li>Speculative: checkpoint RAS top-of-stack with RAT checkpoints</li>
+                </ul>
+            </div>
+        </div>
+
+        <h3 class="section-title">译码 (D1)</h3>
+        <div class="card">
+            <p>D1 每周期译码 4 条指令，识别域、opcode、源/目标寄存器和立即数。</p>
+            <ul>
+                <li>译码宽度：4 instructions / cycle</li>
+                <li>域分类：Opcode[6:5] → scalar / vector / cube / MTE</li>
+                <li>立即数提取：符号扩展和格式相关提取</li>
+                <li>分支检测：识别分支指令以分配 checkpoint</li>
+                <li>无法表达为单微操作的指令在 D1 被拆分为 2 个微操作，消耗 2 个派发槽</li>
+            </ul>
+        </div>
+
+        <h3 class="section-title">重命名 (D2)</h3>
+        <p class="section-desc">
+            重命名阶段使用两个独立的 RAT（Register Alias Table）进行寄存器重命名。
+            Scalar RAT 映射 32 个架构 GPR 到 128 个物理 GPR，Tile RAT 映射 32 个架构 tile 寄存器到 256 个物理 tile。
+        </p>
+        <div class="grid-2">
+            <div class="card">
+                <h3>Scalar RAT</h3>
+                <ul>
+                    <li>架构寄存器：32 (X0–X31)</li>
+                    <li>物理寄存器：128 (P0–P127)</li>
+                    <li>RAT 存储：32 entries &times; 7 bits = 224 bits</li>
+                    <li>读端口：8 (2 sources &times; 4 slots)</li>
+                    <li>写端口：4 (1 dest &times; 4 slots)</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Tile RAT (Vector/Cube/MTE)</h3>
+                <ul>
+                    <li>架构 tile 寄存器：32 (T0–T31)</li>
+                    <li>物理 tile 寄存器：256 (PT0–PT255), 4 KB each</li>
+                    <li>RAT 存储：32 entries &times; 8 bits = 256 bits</li>
+                    <li>读端口：8 (up to 3 src tiles &times; 4 slots)</li>
+                    <li>写端口：4 (1 dst tile &times; 4 slots)</li>
+                </ul>
+            </div>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">组内旁路逻辑 (Intra-Group Bypass)</h4>
+        <div class="card">
+            <p>当 4 条指令同时重命名时，后条指令可能依赖前条。硬件优先编码比较器检测这些组内依赖：</p>
+            <ul>
+                <li><strong>Scalar</strong>: 4 slots &times; 2 sources &times; 3 older slots = <strong>24 个比较器</strong> (7-bit) + 8 bypass MUX</li>
+                <li><strong>Tile</strong>: 4 slots &times; 3 tile sources &times; 3 older slots = <strong>36 个比较器</strong> (8-bit) + 12 bypass MUX</li>
+            </ul>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">Free Lists</h4>
+        <div class="mermaid-container">
+        <pre class="mermaid">
+flowchart TB
+    subgraph D2["D2 重命名阶段 (4-wide)"]
+        INST["4 条指令<br/>Decode 输出"]
+        AR["架构寄存器<br/>X0-X31 / T0-T31"]
+        SR2["Scalar RAT<br/>32×7bit → P0-P127"]
+        TR2["Tile RAT<br/>32×8bit → PT0-PT255"]
+        SFL["Scalar Free List<br/>96 entries"]
+        TFL["Tile Free List<br/>224 entries"]
+        SRC["Source Tag / Data<br/>来自 CDB / TCB"]
+        BYP["组内旁路<br/>24 scalar + 36 tile 比较器"]
+        CP2["Checkpoint 保存<br/>~499 bits / slot"]
+    end
+
+    INST --> AR
+    AR -->|"架构 src"| SRC
+    AR -->|"架构 dst"| SR2
+    AR -->|"tile dst"| TR2
+    SFL -->|"分配 P-reg"| SR2
+    TFL -->|"分配 PT-reg"| TR2
+    SRC -.->|" wakeup RS"| BYP
+    BYP -.->|"bypass tag"| SR2
+    SR2 -. "checkpoint" .-> CP2
+    TR2 -. "checkpoint" .-> CP2
+        </pre>
+        </div>
+        <div class="diagram-explanation">
+            <h4>双 RAT 重命名流程</h4>
+            <p>D2 阶段每周期重命名 4 条指令，同时维护两个独立的 RAT（Register Alias Table）和对应的 Free List。</p>
+            <ul>
+                <li><strong>源操作数解析</strong>：读 RAT 获取源操作数的物理寄存器 tag，同时检查 CDB/TCB 上的广播结果。如果源就绪，直接获取 data；否则仅携带 tag 进入 RS 等待唤醒。</li>
+                <li><strong>目标寄存器分配</strong>：从对应 Free List 出队一个空闲物理寄存器，更新 RAT 映射。旧物理寄存器的 ref-count +1（表示仍有读者），新物理寄存器的 ready bit 设为 0。</li>
+                <li><strong>组内旁路</strong>：4 条同组指令中，后条可能依赖前条的输出。24 个 7-bit 标量比较器 + 36 个 8-bit Tile 比较器实时检测这些组内依赖，直接旁路 tag。</li>
+                <li><strong>分支 Checkpoint</strong>：遇到分支指令时，将双 RAT 状态 + 双 Free List 头指针 + RAS 栈顶打包保存（~499 bits），支持 8 个在飞未解析分支。Flash-copy / flash-restore 均仅需 1 cycle。</li>
+            </ul>
+        </div>
+        <table>
+            <tr><th>参数</th><th>Scalar</th><th>Tile</th></tr>
+            <tr><td>容量</td><td>96 entries (128 - 32 arch)</td><td>224 entries (256 - 32 arch)</td></tr>
+            <tr><td>出队速率</td><td>up to 4 / cycle</td><td>up to 4 / cycle</td></tr>
+            <tr><td>入队速率</td><td>up to 4 / cycle (ref-count free)</td><td>up to 4 / cycle (ref-count free)</td></tr>
+        </table>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">Checkpoint 存储 (分支恢复)</h4>
+        <div class="card">
+            <ul>
+                <li>Checkpoint 槽位：<strong>8</strong>（支持 8 个在飞未解析分支）</li>
+                <li>Checkpoint 大小：Scalar RAT (224b) + Tile RAT (256b) + scalar free-list head (7b) + tile free-list head (8b) + RAS pointer (4b) = <strong>~499 bits</strong></li>
+                <li>Flash-copy 延迟：<strong>1 cycle</strong>（双 RAT 并行位拷贝）</li>
+                <li>Flash-restore 延迟：<strong>1 cycle</strong>（双 RAT 并行恢复）</li>
+            </ul>
+        </div>
+
+        <h3 class="section-title">派发 (DS)</h3>
+        <p class="section-desc">重命名后，每条微操作根据域和操作类型派发到相应保留站。派发有序，发射乱序。</p>
+        <table>
+            <tr><th>保留站</th><th>服务</th><th>条目</th><th>发射宽度</th></tr>
+            <tr><td>Scalar RS</td><td>4&times; ALU, 1&times; MUL/DIV, 1&times; BRU</td><td>32</td><td>6</td></tr>
+            <tr><td>LSU RS</td><td>Load unit, Store unit</td><td>24</td><td>2</td></tr>
+            <tr><td>Vector RS</td><td>Vector ALU/FMA</td><td>16</td><td>1</td></tr>
+            <tr><td>Cube RS</td><td>CUBE.OPA, CFG, DRAIN, ZERO, WAIT</td><td>4</td><td>1</td></tr>
+            <tr><td>MTE RS</td><td>TILE.LD/ST/GATHER/SCATTER/GET/PUT/COPY</td><td>16</td><td>2</td></tr>
+        </table>
+
+        <div class="highlight-box">
+            <p><strong>RS 容量设计原则</strong>：RS entries ≈ dispatch rate &times; average occupancy time。<br>
+            Scalar RS (32): ~3 dispatch/cy &times; ~8 cy avg occupancy (ALU 1cy + MUL 4cy + DIV 12-20cy)<br>
+            Cube RS (4): CUBE.OPA 极长延迟 (N+18 cy) 但极不频繁，每个 GEMM kernel 仅 ~1 条<br>
+            MTE RS (16): 支持 32-entry outstanding buffer 的 MLP (memory-level parallelism)</p>
+        </div>
+
+        <h3 class="section-title">发射 (IS)</h3>
+        <div class="card">
+            <p>每个功能单元每周期从其 RS 中选择最老的就绪指令：</p>
+            <ul>
+                <li>选择优先级：age 值最低的 (valid &amp;&amp; rdy1 &amp;&amp; rdy2) 条目</li>
+                <li>Scalar RS → 最多 4 ALU + 1 MUL + 1 BRU</li>
+                <li>LSU RS → 1 load + 1 store</li>
+                <li>Vector RS → 1 vector op</li>
+                <li>Cube RS → 1 cube op</li>
+                <li>MTE RS → 2 tile ops</li>
+            </ul>
+        </div>
+
+        <h3 class="section-title">完整执行延迟表</h3>
+        <div style="overflow-x:auto">
+        <table>
+            <tr><th>域</th><th>操作</th><th>阶段</th><th>延迟 (cycles)</th><th>流水线</th></tr>
+            <tr><td>Scalar</td><td>ALU (add, logic, shift)</td><td>EX1</td><td>1</td><td><span class="tag tag-green">Yes</span></td></tr>
+            <tr><td>Scalar</td><td>MUL</td><td>EX1–EX4</td><td>4</td><td><span class="tag tag-green">Yes</span></td></tr>
+            <tr><td>Scalar</td><td>DIV</td><td>EX1–EX(12-20)</td><td>12–20</td><td><span class="tag tag-red">No</span></td></tr>
+            <tr><td>Scalar</td><td>Branch resolve</td><td>EX1</td><td>1</td><td><span class="tag tag-green">Yes</span></td></tr>
+            <tr><td>LSU</td><td>Load (L1 hit)</td><td>EX1–EX4</td><td>4</td><td><span class="tag tag-green">Yes</span></td></tr>
+            <tr><td>LSU</td><td>Load (L2 hit)</td><td>EX1–EX(12)</td><td>12</td><td><span class="tag tag-green">Yes</span></td></tr>
+            <tr><td>LSU</td><td>Store</td><td>EX1–EX4</td><td>4 (addr+data)</td><td><span class="tag tag-green">Yes</span></td></tr>
+            <tr><td>Vector</td><td>VADD/VMUL/VFMA (full tile)</td><td>2 epochs</td><td>16 (8R+8W)</td><td><span class="tag tag-blue">epoch-pipe</span></td></tr>
+            <tr><td>Vector</td><td>VROWSUM/VCOLSUM (reduce)</td><td>1 epoch + reduce</td><td>16</td><td><span class="tag tag-red">No</span></td></tr>
+            <tr><td>Cube</td><td>CUBE.OPA (N steps)</td><td>19 + N</td><td>N + 18</td><td><span class="tag tag-blue">epoch-pipe</span></td></tr>
+            <tr><td>MTE</td><td>TILE.LD (contiguous, L2)</td><td>mem + 1 write epoch</td><td>72</td><td><span class="tag tag-green">Yes</span></td></tr>
+            <tr><td>MTE</td><td>TILE.ST (contiguous, L2)</td><td>1 read epoch + mem</td><td>72</td><td><span class="tag tag-green">Yes</span></td></tr>
+            <tr><td>MTE</td><td>TILE.COPY</td><td>2 epochs</td><td>16</td><td><span class="tag tag-blue">epoch-pipe</span></td></tr>
+            <tr><td>MTE</td><td>TILE.ZERO</td><td>1 write epoch</td><td>8</td><td><span class="tag tag-green">Yes</span></td></tr>
+            <tr><td>MTE</td><td>TILE.MOVE (rename-only)</td><td>— (D2)</td><td>0 (move elimination)</td><td>—</td></tr>
+            <tr><td>MTE</td><td>TILE.TRANSPOSE</td><td>2 epochs</td><td>16 (via transpose buffer)</td><td><span class="tag tag-red">No</span></td></tr>
+            <tr><td>MTE</td><td>TILE.GET (element → GPR)</td><td>1 read epoch + extract</td><td>9</td><td><span class="tag tag-red">No</span></td></tr>
+            <tr><td>MTE</td><td>TILE.PUT (GPR → element)</td><td>2 epochs</td><td>16 (with copy elision: 8)</td><td><span class="tag tag-red">No</span></td></tr>
+        </table>
+        </div>
+
+        <h3 class="section-title">CDB 与 TCB</h3>
+        <div class="grid-2">
+            <div class="card">
+                <h3>Common Data Bus (CDB)</h3>
+                <ul>
+                    <li>端口数：<strong>6</strong> (4 ALU + 1 MUL/LSU + 1 TILE.GET)</li>
+                    <li>广播宽度：7-bit tag + 64-bit data</li>
+                    <li>Snoop: 92 RS entries &times; 2 scalar sources</li>
+                    <li>用途：标量执行结果广播、唤醒 RS 条目</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>Tile Completion Bus (TCB)</h3>
+                <ul>
+                    <li>端口数：<strong>4</strong></li>
+                    <li>广播宽度：<strong>8-bit tile tag only</strong> (无 data payload)</li>
+                    <li>TCB0: Vector unit</li>
+                    <li>TCB1: Cube unit (CUBE.DRAIN)</li>
+                    <li>TCB2-3: MTE unit (TILE.LD/GATHER/ZERO/COPY/PUT)</li>
+                </ul>
+            </div>
+        </div>
+
+        <h3 class="section-title">分支误预测</h3>
+        <div class="mermaid-container">
+        <pre class="mermaid">
+sequenceDiagram
+    participant EX as EX1 (Branch Resolve)
+    participant R as RAT Checkpoint
+    participant F as Front-End (F1/F2)
+    participant I as Issue Queue
+    participant P as Pipeline
+
+    Note over EX: Cycle c: Branch 在 EX1 解析
+    EX->>R: 检测到 mispredict
+    EX->>I: Flush 更年轻的指令
+    EX->>P: Flush F1–IS pipeline stages
+
+    Note over R: Cycle c+1: Flash-restore
+    R->>R: 恢复双 RAT checkpoint (1 cycle)
+    R->>R: 恢复双 Free List head
+    R->>R: 恢复 RAS 栈顶
+
+    Note over F: Cycle c+2: 重定向取指
+    F->>F: PC = 正确目标地址
+    F->>F: TAGE 更新预测状态
+
+    Note over P: Cycle c+3 to c+7: Pipeline refill
+    P->>P: F1→F2→D1→D2→DS→IS
+
+    Note over EX: Cycle c+8: 第一条正确指令到达 EX1
+    EX->>EX: 恢复正常执行
+        </pre>
+        </div>
+        <div class="diagram-explanation">
+            <h4>分支误预测恢复流程</h4>
+            <p>Davinci 的分支恢复机制利用双 RAT 的 checkpoint/restore 设计，在 1 cycle 内完成状态回滚，总惩罚为 <strong>6 cycles</strong>（对比业界典型的 12-15 cycles）。</p>
+            <ul>
+                <li><strong>Cycle c</strong>：分支指令在 EX1 阶段解析为误预测。触发 flush 信号，清除 F1 到 IS 所有更年轻的指令。</li>
+                <li><strong>Cycle c+1</strong>：Flash-restore 双 RAT checkpoint。双 RAT（Scalar 224b + Tile 256b）和双 Free List head 并行恢复，仅需 1 cycle。同时释放被 flush 指令占用的物理寄存器（ref-count 递减）。</li>
+                <li><strong>Cycle c+2</strong>：重定向取指到正确目标地址，TAGE 分支预测器更新历史记录。</li>
+                <li><strong>Cycle c+3 到 c+7</strong>：流水线重新填充（F1→F2→D1→D2→DS→IS），共 5 级前端 + 1 级发射。</li>
+                <li><strong>Cycle c+8</strong>：第一条正确指令到达 EX1 执行，恢复正常流水线吞吐。</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="page" id="page-memory">
+        <h2 class="section-title">存储与数据通路</h2>
+        <p class="section-desc">
+            Davinci 核心的存储子系统包含 TRegFile-4K（统一 tile 物理寄存器）、三级 cache 层次、
+            TLB、Store Buffer、以及 MTE（Memory Tile Engine）直连 L2 的 tile 数据通路。
+        </p>
+
+        <h3 class="section-title">TRegFile-4K 架构</h3>
+        <div class="mermaid-container">
+        <pre class="mermaid">
+flowchart TB
+    subgraph TRF["TRegFile-4K 统一 Tile 寄存器堆<br/>256 physical tiles × 4KB = 1MB SRAM"]
+        direction TB
+        subgraph Banks["64 SRAM Banks × 256 depth × 512-bit<br/>每个 bank 1R + 1W"]
+            G0["Group 0<br/>Bank 0-7"]
+            G1["Group 1<br/>Bank 8-15"]
+            G2["Group 2<br/>Bank 16-23"]
+            G3["Group 3<br/>Bank 24-31"]
+            G4["Group 4<br/>Bank 32-39"]
+            G5["Group 5<br/>Bank 40-47"]
+            G6["Group 6<br/>Bank 48-55"]
+            G7["Group 7<br/>Bank 56-63"]
+        end
+    end
+
+    subgraph RP["8 读端口 R0–R7<br/>512B/cy/port"]
+        R0["R0 → Cube A"]
+        R1["R1 → Cube B"]
+        R2["R2 → Cube B"]
+        R3["R3 → Cube B"]
+        R4["R4 → Cube B"]
+        R5["R5 → Vec/MTE"]
+        R6["R6 → Vec/MTE"]
+        R7["R7 → Vec/MTE"]
+    end
+
+    subgraph WP["8 写端口 W0–W7<br/>512B/cy/port"]
+        W0["W0 → Cube C drain"]
+        W1["W1 → Vec/MTE"]
+        W2["W2 → Vec/MTE"]
+        W3["W3 → Vec/MTE"]
+        W4["W4 → Vec/MTE"]
+        W5["W5 → Vec/MTE"]
+        W6["W6 → Vec/MTE"]
+        W7["W7 → Vec/MTE"]
+    end
+
+    Cal["8-Cycle Epoch Calendar<br/>Port p → Group p+cy mod 8"]
+
+    R0 -.- Cal
+    W0 -.- Cal
+
+    G0 -. "cycle 0" .- Cal
+    G1 -. "cycle 1" .- Cal
+    G2 -. "cycle 2" .- Cal
+    G3 -. "cycle 3" .- Cal
+    G4 -. "cycle 4" .- Cal
+    G5 -. "cycle 5" .- Cal
+    G6 -. "cycle 6" .- Cal
+    G7 -. "cycle 7" .- Cal
+        </pre>
+        </div>
+        <div class="diagram-explanation">
+            <h4>TRegFile-4K 统一 Tile 寄存器堆详解</h4>
+            <p>TRegFile-4K 是 Davinci 架构的核心创新之一，所有 Tile 数据（向量、矩阵、MTE 搬运）统一存储在 1MB SRAM 中，消除了传统架构中 VRF/CRF 之间的数据搬运开销。</p>
+            <ul>
+                <li><strong>存储组织</strong>：256 个物理 Tile（每个 4KB）分布在 64 个 SRAM bank 中，每个 bank 深度 256、宽度 512-bit。64 个 bank 分为 8 个 bank-group（每组 8 个 bank），支持 1R+1W 同时访问。</li>
+                <li><strong>Epoch Calendar 轮转</strong>：8 个读端口和 8 个写端口通过 8 周期轮转日历访问 bank-group。在 cycle <em>c</em>，端口 <em>p</em> 访问 group <em>(p + c) mod 8</em>。每 8 个 cycle 完成一个 epoch，每个端口恰好读取/写入一个完整 Tile（8 groups × 512B = 4KB）。</li>
+                <li><strong>端口分配</strong>：Cube 活跃时占用 R0-R4（读 A/B 操作数）和 W0（写回 C），剩余 R5-R7 和 W1-W7 供 Vector/MTE 使用。Cube 空闲时全部 16 端口可用。</li>
+                <li><strong>零气泡链接</strong>：连续 epoch 可以背靠背执行（zero-bubble epoch chaining），例如 Vector 2-epoch 操作占用连续 16 cycles。</li>
+            </ul>
+        </div>
+        <div class="grid-3">
+            <div class="stat-card"><div class="stat-value">1 MB</div><div class="stat-label">总容量 (256 × 4KB)</div></div>
+            <div class="stat-card"><div class="stat-value">8R + 8W</div><div class="stat-label">读写端口</div></div>
+            <div class="stat-card"><div class="stat-value">512 B/cy</div><div class="stat-label">每端口带宽</div></div>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">端口分配表</h4>
+        <div class="mode-toggle">
+            <div class="mode-btn active" onclick="switchPortScenario('mxfp4')">MXFP4/HiFP4 active</div>
+            <div class="mode-btn" onclick="switchPortScenario('fp16')">FP16/FP8 active</div>
+            <div class="mode-btn" onclick="switchPortScenario('idle')">Cube idle</div>
+        </div>
+        <div id="port-table-mxfp4" style="overflow-x:auto">
+        <table>
+            <tr><th>Port</th><th>Cube active — MXFP4/HiFP4</th></tr>
+            <tr><td>R0</td><td>Cube A operand (1 tile/epoch)</td></tr>
+            <tr><td>R1–R4</td><td>Cube B operand (4 ports, all needed)</td></tr>
+            <tr><td>R5–R7</td><td>Vector src / MTE read (3 free)</td></tr>
+            <tr><td>W0</td><td>Cube C drain</td></tr>
+            <tr><td>W1–W7</td><td>Vector dst / MTE write (7 free)</td></tr>
+        </table>
+        </div>
+        <div id="port-table-fp16" style="overflow-x:auto;display:none">
+        <table>
+            <tr><th>Port</th><th>Cube active — FP16/BF16/FP8</th></tr>
+            <tr><td>R0</td><td>Cube A operand</td></tr>
+            <tr><td>R1–R2</td><td>Cube B operand (2 ports sufficient)</td></tr>
+            <tr><td>R3–R7</td><td>free → Vector / MTE (5 free)</td></tr>
+            <tr><td>W0</td><td>Cube C drain</td></tr>
+            <tr><td>W1–W7</td><td>Vector dst / MTE write (7 free)</td></tr>
+        </table>
+        </div>
+        <div id="port-table-idle" style="overflow-x:auto;display:none">
+        <table>
+            <tr><th>Port</th><th>Cube idle</th></tr>
+            <tr><td>R0–R7</td><td>Vector / MTE — all 8 free</td></tr>
+            <tr><td>W0–W7</td><td>Vector / MTE — all 8 free</td></tr>
+        </table>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">每指令端口占用</h4>
+        <h4 style="color:var(--accent-orange);margin:1rem 0 0.5rem">Vector 指令</h4>
+        <table>
+            <tr><th>指令</th><th>Read ports</th><th>Write ports</th><th>Epochs</th></tr>
+            <tr><td>2-source (VADD, VMUL)</td><td>2 R</td><td>1 W</td><td>1R + 1W</td></tr>
+            <tr><td>3-source (VFMA)</td><td>3 R</td><td>1 W</td><td>1R + 1W</td></tr>
+            <tr><td>Reduce (VROWSUM)</td><td>1 R</td><td>1 W</td><td>1R + 1W</td></tr>
+        </table>
+        <h4 style="color:var(--accent-orange);margin:1rem 0 0.5rem">MTE 指令</h4>
+        <table>
+            <tr><th>指令</th><th>Read ports</th><th>Write ports</th><th>Epochs</th><th>Notes</th></tr>
+            <tr><td>TILE.LD</td><td>—</td><td>1 W</td><td>1 write</td><td>Data from memory</td></tr>
+            <tr><td>TILE.ST</td><td>1 R</td><td>—</td><td>1 read</td><td>Data to memory</td></tr>
+            <tr><td>TILE.COPY</td><td>1 R</td><td>1 W</td><td>1R + 1W</td><td>Epoch-pipeline</td></tr>
+            <tr><td>TILE.ZERO</td><td>—</td><td>1 W</td><td>1 write</td><td>Write zeros</td></tr>
+            <tr><td>TILE.MOVE</td><td>—</td><td>—</td><td>0</td><td>Rename-only</td></tr>
+            <tr><td>TILE.TRANSPOSE</td><td>1 R</td><td>1 W</td><td>1R + 1W</td><td>Via 4KB buffer</td></tr>
+            <tr><td>TILE.GET</td><td>1 R</td><td>—</td><td>1 read (full)</td><td>Only 1 row captured</td></tr>
+            <tr><td>TILE.PUT</td><td>1 R</td><td>1 W</td><td>1R + 1W</td><td>RMW; elided: 1W</td></tr>
+        </table>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">Epoch Calendar 轮转可视化</h4>
+        <div class="epoch-canvas-wrap">
+            <div class="epoch-controls">
+                <div class="epoch-btn" onclick="epochStep(-1)">◀ 上一步</div>
+                <div class="epoch-btn active" id="epoch-play-btn" onclick="epochTogglePlay()">▶ 播放</div>
+                <div class="epoch-btn" onclick="epochStep(1)">下一步 ▶</div>
+                <div class="epoch-btn" onclick="epochReset()">↺ 重置</div>
+            </div>
+            <canvas id="epoch-canvas" width="900" height="420"></canvas>
+            <p style="color:var(--text-muted);font-size:0.8rem;margin-top:0.5rem">
+                Epoch Calendar: 端口 p 在 cycle c 访问 bank-group <strong>(p + c) mod 8</strong>。每 8 cycles 完成一个 epoch。
+            </p>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">VEC-4K 向量数据通路</h4>
+        <div class="mermaid-container">
+        <pre class="mermaid">
+flowchart TB
+    subgraph VEC["VEC-4K 向量执行单元"]
+        direction TB
+        subgraph Input["输入 (1 Read Epoch = 8 cycles)"]
+            SRC_A["源操作数 A<br/>1 tile (4KB)<br/>via R-port"]
+            SRC_B["源操作数 B<br/>1 tile (4KB)<br/>via R-port"]
+            SRC_C["源操作数 C<br/>1 tile (4KB)<br/>via R-port (FMA only)"]
+        end
+
+        subgraph Compute["128 独立计算组<br/>Strip-based 处理"]
+            CG["Compute Group ×128<br/>每 group 处理 8 strips × 512B"]
+            OP["操作: VADD / VMUL / VFMA<br/>VROWSUM / VCOLSUM / VEXPAND"]
+            FIB["Fiber ID<br/>用于 reduce 和 expand 操作"]
+        end
+
+        subgraph Output["输出 (1 Write Epoch = 8 cycles)"]
+            DST["目标 Tile<br/>1 tile (4KB)<br/>via W-port"]
+        end
+    end
+
+    TRF3["TRegFile-4K"]
+
+    TRF3 -->|"Read port"| SRC_A
+    TRF3 -->|"Read port"| SRC_B
+    TRF3 -. "Read port (FMA)" .-> SRC_C
+    SRC_A --> CG
+    SRC_B --> CG
+    SRC_C -.-> CG
+    CG --> OP
+    OP --> DST
+    DST -->|"Write port"| TRF3
+    FIB -.-> OP
+        </pre>
+        </div>
+        <div class="diagram-explanation">
+            <h4>VEC-4K 向量数据通路详解</h4>
+            <p>VEC-4K 是 Davinci 的向量执行单元，处理 512b 宽度的元素级操作。它采用 strip-based 处理模型，将一个 4KB Tile 分为 8 个 strip（每个 512B）进行逐 strip 计算。</p>
+            <ul>
+                <li><strong>128 独立计算组</strong>：每个 Tile 的 8 strips × 64 elements / strip 被分配到 128 个独立计算组。这允许细粒度的数据并行和 fault tolerance。</li>
+                <li><strong>操作类型</strong>：VADD/VMUL（2 源，1 epoch 读 + 1 epoch 写 = 16 cycles）、VFMA（3 源，同样 16 cycles）、VROWSUM/VCOLSUM（跨 strip reduce，16 cycles 但非流水线）、VEXPAND（基于 Fiber ID 的广播扩展）。</li>
+                <li><strong>Fiber ID</strong>：每个计算组携带一个 Fiber ID，用于 reduce（跨 group 汇总）和 expand（从一个元素广播到整个 strip）操作。这是 VEC-4K 支持灵活数据布局的关键机制。</li>
+                <li><strong>延迟</strong>：2 epochs（8R + 8W）= 16 cycles 端到端。双源操作和三源 FMA 的延迟相同，因为瓶颈在 TRegFile 端口带宽而非计算。</li>
+            </ul>
+        </div>
+        <h3 class="section-title">Cache 层次</h3>
+        <div class="mermaid-container">
+        <pre class="mermaid">
+flowchart TB
+    subgraph Core["Davinci Core"]
+        FE2["前端<br/>Fetch Unit"]
+        LSU2["LSU<br/>Load/Store"]
+        MTE2["MTE<br/>Tile Engine"]
+    end
+
+    L1I["L1-I Cache<br/>64 KB, 4-way<br/>64B line, 2-cycle latency<br/>1R port, 4 MSHRs"]
+    L1D["L1-D Cache<br/>64 KB, 4-way<br/>64B line, 4-cycle latency<br/>1R+1W port, 8 MSHRs"]
+    L2["L2 Unified Cache<br/>512 KB, 8-way<br/>64B line, 12-cycle latency<br/>1R+1W port, 16 MSHRs"]
+    NoC2["External NoC<br/>片间互连"]
+
+    ITLB["I-TLB<br/>64 entries<br/>Fully assoc"]
+    DTLB["D-TLB<br/>64 entries<br/>Fully assoc"]
+    L2TLB["L2 TLB<br/>512 entries, 8-way<br/>4KB / 2MB / 1GB"]
+
+    FE2 --> ITLB --> L1I
+    LSU2 --> DTLB --> L1D
+    MTE2 -. "直连 L2<br/>绕过 L1-D" .-> L2
+    L1I --> L2
+    L1D --> L2
+    L2 --> NoC2
+    ITLB -. "miss" .-> L2TLB
+    DTLB -. "miss" .-> L2TLB
+        </pre>
+        </div>
+        <div class="diagram-explanation">
+            <h4>Cache 层次与 TLB 结构</h4>
+            <p>Davinci 采用经典的哈佛结构 L1（指令/数据分离）+ 统一 L2 的三级 cache 设计，并配有两级 TLB 层次。</p>
+            <ul>
+                <li><strong>L1-I Cache</strong>：64 KB 4-way，2 周期延迟，服务前端取指。4 MSHR 支持有限的 cache miss 处理。</li>
+                <li><strong>L1-D Cache</strong>：64 KB 4-way，4 周期延迟，服务标量 Load/Store。1R+1W 双端口，8 MSHR。</li>
+                <li><strong>L2 Unified Cache</strong>：512 KB 8-way，12 周期延迟，16 MSHR。L1-I 和 L1-D 的 miss 均汇入 L2。MTE 的 Tile 搬运也通过 L2，但<strong>绕过 L1-D</strong>，减少中间层级。</li>
+                <li><strong>TLB</strong>：I-TLB 和 D-TLB 各 64 entries 全相联，支持 4KB 和 2MB 页面。L2 TLB 512 entries 8-way，额外支持 1GB huge page。</li>
+            </ul>
+        </div>
+        <table>
+            <tr><th>Cache</th><th>Size</th><th>Assoc</th><th>Line</th><th>Latency</th><th>Ports</th><th>MSHRs</th></tr>
+            <tr><td>L1-I</td><td>64 KB</td><td>4-way</td><td>64 B</td><td>2 cycles</td><td>1R</td><td>4</td></tr>
+            <tr><td>L1-D</td><td>64 KB</td><td>4-way</td><td>64 B</td><td>4 cycles</td><td>1R + 1W</td><td>8</td></tr>
+            <tr><td>L2</td><td>512 KB</td><td>8-way</td><td>64 B</td><td>12 cycles</td><td>1R + 1W</td><td>16</td></tr>
+        </table>
+
+        <h3 class="section-title">TLB</h3>
+        <table>
+            <tr><th>TLB</th><th>Entries</th><th>Associativity</th><th>Page sizes</th><th>Miss penalty</th></tr>
+            <tr><td>I-TLB</td><td>64</td><td>Fully assoc</td><td>4 KB, 2 MB</td><td>L2 TLB lookup</td></tr>
+            <tr><td>D-TLB</td><td>64</td><td>Fully assoc</td><td>4 KB, 2 MB</td><td>L2 TLB lookup</td></tr>
+            <tr><td>L2 TLB (unified)</td><td>512</td><td>8-way</td><td>4 KB, 2 MB, 1 GB</td><td>Page table walk</td></tr>
+        </table>
+
+        <h3 class="section-title">MTE 架构</h3>
+        <div class="mermaid-container">
+        <pre class="mermaid">
+flowchart LR
+    subgraph MTE_RS["MTE RS — 16 entries"]
+        direction TB
+        LD["TILE.LD Pipeline<br/>Load Tile"]
+        ST["TILE.ST Pipeline<br/>Store Tile"]
+        GS["Gather/Scatter<br/>Pipeline"]
+        GET["TILE.GET Pipeline<br/>tile → GPR"]
+        PUT["TILE.PUT Pipeline<br/>GPR → tile (RMW)"]
+        CPY["TILE.COPY Pipeline<br/>tile → tile"]
+    end
+
+    ORB["Outstanding Request Buffer<br/>32 entries, deep MLP"]
+
+    L2IF["L2 / Memory Interface<br/>64B/cy bandwidth<br/>1 tile = 64 cycles from L2"]
+
+    TRF_W["TRegFile-4K<br/>Write Ports W1–W7"]
+    TRF_R["TRegFile-4K<br/>Read Ports R5–R7"]
+
+    CDB2["CDB<br/>TILE.GET 结果"]
+
+    MTE_RS --> ORB --> L2IF
+    L2IF --> TRF_W
+    TRF_R --> ST
+    TRF_R --> GS
+    GET --> CDB2
+        </pre>
+        </div>
+        <div class="diagram-explanation">
+            <h4>Memory Tile Engine (MTE) 详解</h4>
+            <p>MTE 是 Davinci 的 tile 数据搬运引擎，负责 TRegFile-4K 与外部存储（L2 Cache / 主存）之间的数据传输，同时支持 Tile 与标量 GPR 之间的数据转换。</p>
+            <ul>
+                <li><strong>6 条流水线</strong>：TILE.LD（加载 Tile）、TILE.ST（存储 Tile）、Gather/Scatter（非连续搬运）、TILE.GET（提取单行到 GPR）、TILE.PUT（插入 GPR 到 Tile，支持 RMW）、TILE.COPY（Tile 间拷贝）。</li>
+                <li><strong>32-entry Outstanding Buffer</strong>：支持深度 MLP（Memory-Level Parallelism），最多 32 个未完成的 L2 请求同时飞行，有效隐藏 72-cycle 的 TILE.LD 延迟。</li>
+                <li><strong>直连 L2 路径</strong>：MTE 绕过 L1-D Cache，直接读写 L2。一个 Tile（4KB）需要 64 cycles（64B/cy 带宽）。TILE.LD 总延迟 = 72 cycles（含 epoch 写入开销）。</li>
+                <li><strong>端口使用</strong>：TILE.LD 占用 1 个写端口（W1-W7），TILE.ST 占用 1 个读端口（R5-R7）。TILE.GET 的结果通过 CDB 广播到标量域。</li>
+            </ul>
+        </div>
+
+        <div class="grid-2">
+            <div class="card">
+                <h3>TILE.LD 延迟分解</h3>
+                <ul>
+                    <li>Memory phase: ~64 cycles (from L2, 64 cache lines)</li>
+                    <li>TRegFile write epoch: 8 cycles</li>
+                    <li><strong>Total (L2 hit): 72 cycles</strong></li>
+                    <li>Outstanding buffer: 32 entries</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>TILE.MOVE 消除 (Move Elimination)</h3>
+                <p>TILE.MOVE 在 D2 重命名阶段完全处理，零延迟：</p>
+                <ul>
+                    <li>Tile RAT[Td] 指向与 Ts 相同的物理 tile</li>
+                    <li>refcount(PT_src) += 1</li>
+                    <li>无 RS 分配、无执行、无 TCB 广播</li>
+                    <li>PT_old 若 orphan 且 refcount==0 则释放</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>TILE.TRANSPOSE</h3>
+            <p>通过专用 4 KB transpose buffer 实现完整读-转置-写：</p>
+            <ul>
+                <li>Cycles 1–8: 从源 PT 读取 64 行 (512 B/cy) → 存入 transpose buffer</li>
+                <li>Cycles 9–16: 从 transpose buffer 写出 64 转置行 → 目标 PT</li>
+                <li><strong>总延迟: 16 cycles</strong></li>
+            </ul>
+            <table>
+                <tr><th>fmt</th><th>元素宽度</th><th>Tile 布局</th><th>转置块</th></tr>
+                <tr><td>000 (FP64)</td><td>8 B</td><td>64 &times; 8</td><td>8&times;8 (8 blocks)</td></tr>
+                <tr><td>001 (FP32)</td><td>4 B</td><td>64 &times; 16</td><td>16&times;16 (4 blocks)</td></tr>
+                <tr><td>010 (FP16)</td><td>2 B</td><td>64 &times; 32</td><td>32&times;32 (2 blocks)</td></tr>
+                <tr><td>100 (FP8)</td><td>1 B</td><td>64 &times; 64</td><td>64&times;64 (full tile)</td></tr>
+            </table>
+        </div>
+
+        <h3 class="section-title">Store Buffer</h3>
+        <div class="card">
+            <table>
+                <tr><th>参数</th><th>值</th></tr>
+                <tr><td>Entries</td><td>16</td></tr>
+                <tr><td>Commit policy</td><td>OoO commit（无精确异常需求）</td></tr>
+                <tr><td>Forwarding</td><td>Full store-to-load forwarding (address+size match)</td></tr>
+                <tr><td>Write-combining</td><td>Adjacent stores to same cache line merged</td></tr>
+                <tr><td>Drain policy</td><td>Oldest-first to L1-D when not conflicting with loads</td></tr>
+            </table>
+            <div class="warn-box" style="margin-top:1rem">
+                <p><strong>OoO Store Commit</strong>: 由于 Davinci 核心不需要精确异常，store 在地址和数据就绪后立即提交到 cache 层次。Store buffer 仅作为写合并队列，而非等待顺序退休的推测缓冲区。</p>
+            </div>
+        </div>
+
+        <h3 class="section-title">存储排序</h3>
+        <div class="card">
+            <ul>
+                <li><strong>标量 load/store</strong>：通过 LSU 地址消歧保持程序序（store-to-load forwarding, load queue snooping）</li>
+                <li><strong>TILE.LD/ST</strong>：彼此之间默认无序。需要排序时使用 FENCE 指令</li>
+                <li><strong>CUBE.OPA</strong>：通过 Tile RAT ready bits 与前面的 TILE.LD 保持排序</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="page" id="page-outercube">
+        <h2 class="section-title">outerCube 矩阵单元</h2>
+        <p class="section-desc">
+            outerCube MXU (Matrix Unit) 是大规模外积累积引擎，包含 4096 个 base 16-bit MAC 单元，
+            组织为 8 banks &times; 8&times;64。Sub-word partitioning 将吞吐扩展至 8192 (FP8) 和 32768 (MXFP4) MACs/cycle。
+            所有格式统一累加到 32-bit FP32 累加器，ping-pong 双缓冲。
+        </p>
+        <div class="grid-4">
+            <div class="stat-card"><div class="stat-value">4096</div><div class="stat-label">Base 16-bit MACs</div></div>
+            <div class="stat-card"><div class="stat-value">8</div><div class="stat-label">Banks</div></div>
+            <div class="stat-card"><div class="stat-value">19</div><div class="stat-label">Pipeline Stages</div></div>
+            <div class="stat-card"><div class="stat-value">32 KB</div><div class="stat-label">Accumulator (Ping-Pong)</div></div>
+        </div>
+
+        <h3 class="section-title">数据格式与 MAC 缩放</h3>
+        <table>
+            <tr><th>Format</th><th>Element bits</th><th>Sign</th><th>Exponent</th><th>Mantissa</th><th>Shared exp</th><th>Notes</th></tr>
+            <tr><td>FP16</td><td>16</td><td>1</td><td>5</td><td>10</td><td>—</td><td>IEEE 754 half</td></tr>
+            <tr><td>BF16</td><td>16</td><td>1</td><td>8</td><td>7</td><td>—</td><td>Brain float</td></tr>
+            <tr><td>FP8 (E4M3)</td><td>8</td><td>1</td><td>4</td><td>3</td><td>—</td><td>OCP FP8</td></tr>
+            <tr><td>FP8 (E5M2)</td><td>8</td><td>1</td><td>5</td><td>2</td><td>—</td><td>OCP FP8</td></tr>
+            <tr><td>MXFP4</td><td>4 (+8 shared)</td><td>1</td><td>2</td><td>1</td><td>8-bit / 32-elem block</td><td>OCP MX format</td></tr>
+            <tr><td>HiFP4</td><td>4</td><td>1</td><td>1</td><td>2</td><td>—</td><td>High-mantissa FP4</td></tr>
+        </table>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">Sub-word Partitioning (1:2:8 ratio)</h4>
+        <table>
+            <tr><th>Format</th><th>Products/MAC/cycle</th><th>K consumed/MAC/cycle</th><th>Total K/cycle (Mode A)</th><th>Effective MACs/cycle</th></tr>
+            <tr><td>FP16</td><td>1</td><td>1</td><td>8</td><td>4,096</td></tr>
+            <tr><td>BF16</td><td>1</td><td>1</td><td>8</td><td>4,096</td></tr>
+            <tr><td>FP8</td><td>2</td><td>2</td><td>16</td><td>8,192</td></tr>
+            <tr><td>MXFP4</td><td>8</td><td>8</td><td>64</td><td>32,768</td></tr>
+            <tr><td>HiFP4</td><td>8</td><td>8</td><td>64</td><td>32,768</td></tr>
+        </table>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">Adder Tree 精度优化</h4>
+        <table>
+            <tr><th>Format</th><th>Products to reduce</th><th>Tree depth</th><th>Internal mantissa</th><th>Internal exponent</th><th>Total width</th><th>vs FP32 savings</th></tr>
+            <tr><td>FP16</td><td>1 (no tree)</td><td>0</td><td>22</td><td>6</td><td>28 bits</td><td>12.5%</td></tr>
+            <tr><td>BF16</td><td>1 (no tree)</td><td>0</td><td>16</td><td>9</td><td>25 bits</td><td>22%</td></tr>
+            <tr><td>FP8</td><td>2</td><td>1</td><td>9</td><td>5</td><td>15 bits</td><td>53%</td></tr>
+            <tr><td>MXFP4</td><td>8</td><td>3</td><td>7</td><td>4+8=12</td><td>20 bits</td><td>37%</td></tr>
+            <tr><td>HiFP4</td><td>8</td><td>3</td><td>9</td><td>2</td><td>12 bits</td><td>62%</td></tr>
+        </table>
+        <div class="highlight-box">
+            <p><strong>设计原则</strong>: 乘法器产生全精度乘积 → intra-MAC adder tree 使用缩减 mantissa + exponent → tree output 仅在最终累加时拓宽到 FP32（零填充 LSB，无精度损失）。</p>
+        </div>
+
+        <h3 class="section-title">双模式操作</h3>
+        <div class="mode-toggle">
+            <div class="mode-btn active" onclick="switchMode('A')">Mode A: K-Parallel</div>
+            <div class="mode-btn" onclick="switchMode('B')">Mode B: M-Parallel</div>
+        </div>
+
+        <div id="mode-a-content">
+            <div class="card">
+                <h3>Mode A: K-Parallel</h3>
+                <p>每个 bank 接收不同的 K-group 的 A 和 B。Inter-bank adder tree 将 8 个部分积归约为共享累加器。</p>
+                <ul>
+                    <li>Output tile: <strong>8 &times; 64</strong> (M_tile=8, N_tile=64)</li>
+                    <li>K consumed per step: K_step = 8 &times; K_mac (FP16: 8, FP8: 16, MXFP4: 64)</li>
+                    <li>Inter-bank adder tree: active (8→1, +1 pipeline latency)</li>
+                    <li>Accumulator: 2 KB (shared)</li>
+                </ul>
+            </div>
+        </div>
+        <div id="mode-b-content" style="display:none">
+            <div class="card">
+                <h3>Mode B: M-Parallel (Independent Banks)</h3>
+                <p>每个 bank 处理不同的 M-block（不同的 8 行 A）。所有 bank 使用相同的 B 数据。Adder tree 被绕过。</p>
+                <ul>
+                    <li>Output tile: <strong>64 &times; 64</strong> (8 banks &times; 8 rows &times; 64 cols)</li>
+                    <li>K consumed per step: K_step = K_mac (FP16: 1, FP8: 2, MXFP4: 8)</li>
+                    <li>Inter-bank adder tree: <strong>bypassed</strong></li>
+                    <li>Accumulator: 16 KB (8 &times; 2 KB independent)</li>
+                </ul>
+            </div>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">Mode A vs Mode B 对比</h4>
+        <table>
+            <tr><th>Property</th><th>Mode A</th><th>Mode B</th></tr>
+            <tr><td>A distribution</td><td>8 different K-groups</td><td>8 different M-blocks</td></tr>
+            <tr><td>B distribution</td><td>8 banks same N range</td><td>Same B, each bank reads independently</td></tr>
+            <tr><td>Output tile</td><td>8 &times; 64</td><td>64 &times; 64</td></tr>
+            <tr><td>K per step (FP16)</td><td>8</td><td>1</td></tr>
+            <tr><td>K per step (FP8)</td><td>16</td><td>2</td></tr>
+            <tr><td>K per step (MXFP4)</td><td>64</td><td>8</td></tr>
+            <tr><td>Adder tree</td><td>active (8→1)</td><td>bypassed</td></tr>
+            <tr><td>Accumulator</td><td>2 KB (shared)</td><td>16 KB (independent)</td></tr>
+        </table>
+
+        <div class="highlight-box">
+            <p><strong>Mode 选择指导</strong>：<br>
+            Mode A 优先：K 大且对齐到 K_step（transformer decode, deep CNN layers）<br>
+            Mode B 优先：M 大 (&ge; 64) 且 K 小/非对齐（CNN early layers），消除 K-ceiling 浪费</p>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">MXU Bank 结构</h4>
+        <div class="mermaid-container">
+        <pre class="mermaid">
+flowchart TB
+    subgraph MXU2["outerCube MXU — 4096 Base MACs"]
+        direction TB
+        subgraph BankArr["8 Banks × 8 rows × 64 MACs"]
+            B0["Bank 0<br/>8×64 = 512 MACs"]
+            B1["Bank 1<br/>8×64 = 512 MACs"]
+            B2["Bank 2<br/>8×64 = 512 MACs"]
+            B3["Bank 3<br/>8×64 = 512 MACs"]
+            B4["Bank 4<br/>8×64 = 512 MACs"]
+            B5["Bank 5<br/>8×64 = 512 MACs"]
+            B6["Bank 6<br/>8×64 = 512 MACs"]
+            B7["Bank 7<br/>8×64 = 512 MACs"]
+        end
+
+        AT["Inter-bank Adder Tree<br/>8→1 (Mode A active)<br/>Bypassed (Mode B)"]
+
+        ACC3["FP32 Accumulator<br/>Mode A: 2KB shared<br/>Mode B: 16KB (8×2KB independent)<br/>Ping-pong: z0 / z1"]
+    end
+
+    A_Buf["A Staging Buffer<br/>4KB × 2 (double)"]
+    B_Buf["B Staging Buffer<br/>16KB × 2 (double)<br/>Pre-load: 48KB × 3 (triple)"]
+
+    A_Buf -->|"8 rows × 1 col"| BankArr
+    B_Buf -->|"1 row × 64 cols"| BankArr
+    BankArr --> AT
+    AT --> ACC3
+        </pre>
+        </div>
+        <div class="diagram-explanation">
+            <h4>MXU Bank 结构详解</h4>
+            <p>outerCube MXU 的 4096 个 base 16-bit MAC 组织为 8 个 bank，每个 bank 包含 8 行 × 64 列 = 512 个 MAC 单元。通过 sub-word partitioning，FP8 格式每 MAC 产生 2 个乘积，MXFP4 格式每 MAC 产生 8 个乘积。</p>
+            <ul>
+                <li><strong>Bank 并行</strong>：8 个 bank 可以并行处理不同的数据块（Mode A 中不同 K-group，Mode B 中不同 M-block），提供天然的数据并行。</li>
+                <li><strong>Staging Registers</strong>：A-Buf（4KB × 2, double buffer）暂存 A 操作数，B-Buf（16KB × 2 或 48KB × 3 pre-load）暂存 B 操作数。Ping-pong 缓冲允许计算与数据加载重叠。</li>
+                <li><strong>Inter-bank Adder Tree</strong>：Mode A 中激活，将 8 个 bank 的部分积归约到共享累加器（8→1, +1 cycle）。Mode B 中绕过，每个 bank 独立累加。</li>
+                <li><strong>FP32 Accumulator</strong>：所有格式的乘积统一以 FP32 精度累加。Mode A 使用 2KB 共享累加器（ping-pong z0/z1），Mode B 使用 16KB 独立累加器（8 bank × 2KB）。</li>
+            </ul>
+        </div>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">Mode A vs Mode B 数据流对比</h4>
+        <div class="mermaid-container">
+        <pre class="mermaid">
+flowchart TB
+    subgraph MA["Mode A: K-Parallel<br/>Output tile: 8×64"]
+        direction TB
+        MA_in["输入: A(M×K) × B(K×N)"]
+        MA_step["每 step: 8 banks 各处理不同 K-group<br/>K_step = 8 × K_mac<br/>8 banks → adder tree → 1 个 8×64 partial"]
+        MA_acc["累加: 2KB 共享累加器<br/>N_steps = ⌈K/K_step⌉ × S"]
+        MA_out["输出: 8×64 tile"]
+        MA_in --> MA_step --> MA_acc --> MA_out
+    end
+
+    subgraph MB["Mode B: M-Parallel<br/>Output tile: 64×64"]
+        direction TB
+        MB_in["输入: A(M×K) × B(K×N)"]
+        MB_step["每 step: 8 banks 各处理不同 M-block<br/>K_step = K_mac<br/>8 banks → bypass adder → 8 个独立 8×64"]
+        MB_acc["累加: 16KB 独立累加器<br/>N_steps = ⌈K/K_step⌉ × S"]
+        MB_out["输出: 64×64 tile (8×8×64)"]
+        MB_in --> MB_step --> MB_acc --> MB_out
+    end
+        </pre>
+        </div>
+        <div class="diagram-explanation">
+            <h4>Mode A 与 Mode B 数据流对比</h4>
+            <p>outerCube 的双模式设计针对不同矩阵维度优化。两种模式共享相同的硬件（8 banks × 512 MACs），但数据流和累加方式不同。</p>
+            <ul>
+                <li><strong>Mode A (K-Parallel)</strong>：所有 bank 协作处理同一个 8×64 输出 tile。每个 bank 负责不同的 K-group，通过 inter-bank adder tree 将 8 个部分积归约。适用于 K 大（≥64）的场景，如 Transformer decode 和深层 CNN。</li>
+                <li><strong>Mode B (M-Parallel)</strong>：每个 bank 独立处理不同的 M-block，产生 8 个独立的 8×64 输出 tile（拼接为 64×64）。Adder tree 被绕过，每个 bank 使用独立的 2KB 累加器。适用于 M 大（≥64）且 K 较小的场景，如 CNN 早期层。</li>
+                <li><strong>关键权衡</strong>：Mode A 的 M=4/8 利用率仅 50%（8×64 bank 中仅使用部分行）；Mode B 消除了 K-step ceiling 浪费但需要更大的累加器（16KB vs 2KB）。</li>
+            </ul>
+        </div>
+
+        <h3 class="section-title">19 级流水线</h3>
+        <div class="mermaid-container">
+        <pre class="mermaid">
+flowchart LR
+    subgraph OF["Operand Fetch — 8 cycles<br/>TRegFile → Staging Registers"]
+        direction LR
+        OF0["OF0<br/>cy 0"]
+        OF1["OF1<br/>cy 1"]
+        OF2["OF2<br/>cy 2"]
+        OF3["OF3<br/>cy 3"]
+        OF4["OF4<br/>cy 4"]
+        OF5["OF5<br/>cy 5"]
+        OF6["OF6<br/>cy 6"]
+        OF7["OF7<br/>cy 7"]
+    end
+
+    subgraph CMP["Compute — 3 cycles"]
+        direction LR
+        MUL2["MUL<br/>cy 8<br/>4096 MACs"]
+        RED2["RED<br/>cy 9<br/>Adder tree"]
+        ACC2["ACC<br/>cy 10<br/>FP32 accum"]
+    end
+
+    subgraph AD["Accumulator Drain — 8 cycles<br/>ACC SRAM → TRegFile"]
+        direction LR
+        AD0["AD0<br/>cy 11"]
+        AD1["AD1<br/>cy 12"]
+        AD2["AD2<br/>cy 13"]
+        AD3["AD3<br/>cy 14"]
+        AD4["AD4<br/>cy 15"]
+        AD5["AD5<br/>cy 16"]
+        AD6["AD6<br/>cy 17"]
+        AD7["AD7<br/>cy 18"]
+    end
+
+    OF0 --> OF1 --> OF2 --> OF3 --> OF4 --> OF5 --> OF6 --> OF7 --> MUL2 --> RED2 --> ACC2 --> AD0 --> AD1 --> AD2 --> AD3 --> AD4 --> AD5 --> AD6 --> AD7
+        </pre>
+        </div>
+        <div class="diagram-explanation">
+            <h4>outerCube 19 级流水线详解</h4>
+            <p>outerCube 的 19 级流水线分为三个宏阶段，端到端延迟为 <strong>8 + 1 + 1 + 1 + 8 = 19 cycles</strong>。</p>
+            <ul>
+                <li><strong>Operand Fetch (OF0–OF7, 8 cycles)</strong>：通过 8 个读端口从 TRegFile-4K 的 8 个 bank-group 依次读取 A 操作数（R0）和 B 操作数（R1-R4），存入 Staging Registers。每 cycle 读取 512B（1 个 bank-group），8 cycles 后 4KB Tile 数据全部就位。A-Buf（4KB×2 double buffer）和 B-Buf（16KB×2 double buffer）提供 ping-pong 缓冲。</li>
+                <li><strong>Compute (MUL→RED→ACC, 3 cycles)</strong>：MUL 阶段执行 4096 个并行 MAC（sub-word partitioning 支持 1:2:8 缩放）；RED 阶段通过 inter-bank adder tree 将 8 个部分积归约（Mode A 激活，Mode B 绕过）；ACC 阶段将结果 FP32 累加到 ping-pong 累加器（z0/z1）。</li>
+                <li><strong>Accumulator Drain (AD0–AD7, 8 cycles)</strong>：将累加器结果通过写端口 W0 逐 cycle 写回 TRegFile-4K 的 8 个 bank-group。写回同样遵循 epoch calendar 轮转。</li>
+            </ul>
+        </div>
+        <table>
+            <tr><th>Sub-stage</th><th>Macro</th><th>Cy#</th><th>Function</th></tr>
+            <tr><td>OF0</td><td>OF 1/8</td><td>0</td><td>R0–R4 read bank-group 0 → staging regs</td></tr>
+            <tr><td>OF1</td><td>OF 2/8</td><td>1</td><td>R0–R4 read bank-group 1 → staging regs</td></tr>
+            <tr><td>OF2–OF6</td><td>OF 3-7/8</td><td>2–6</td><td>R0–R4 read bank-groups 2–6 → staging regs</td></tr>
+            <tr><td>OF7</td><td>OF 8/8</td><td>7</td><td>R0–R4 read bank-group 7; staging regs full (4KB)</td></tr>
+            <tr><td>MUL</td><td>CMP</td><td>8</td><td>4096 parallel MACs (sub-word partitioned)</td></tr>
+            <tr><td>RED</td><td>CMP</td><td>9</td><td>Inter-bank adder tree (Mode A: 8→1) / bypass (B)</td></tr>
+            <tr><td>ACC</td><td>CMP</td><td>10</td><td>FP32 add to ping-pong accumulator (z0 or z1)</td></tr>
+            <tr><td>AD0</td><td>AD 1/8</td><td>11</td><td>W0 writes bank-group 0 from accumulator</td></tr>
+            <tr><td>AD1–AD6</td><td>AD 2-7/8</td><td>12–17</td><td>W0 writes bank-groups 1–6</td></tr>
+            <tr><td>AD7</td><td>AD 8/8</td><td>18</td><td>W0 writes bank-group 7; drain complete</td></tr>
+        </table>
+        <p class="section-desc">端到端延迟: 8 + 1 + 1 + 1 + 8 = 19 cycles。内部计算吞吐: MUL → RED → ACC 以 1 step/cycle 流水线化。</p>
+
+        <h4 style="color:var(--accent-cyan);margin:1.5rem 0 0.5rem">Staging Registers</h4>
+        <table>
+            <tr><th>Buffer</th><th>Per-buffer size</th><th>Count</th><th>Total SRAM</th><th>Source</th><th>Fill time</th></tr>
+            <tr><td>A-Buf</td><td>4 KB (1 A tile)</td><td>2 (double)</td><td>8 KB</td><td>R0</td><td>8 cy</td></tr>
+            <tr><td>B-Buf</td><td>16 KB (4 B tiles)</td><td>2 (double)</td><td>32 KB</td><td>R1–R4</td><td>8 cy</td></tr>
+            <tr><td>Baseline total</td><td></td><td></td><td>40 KB</td><td></td><td></td></tr>
+            <tr><td>B-Buf (pre-load)</td><td>16 KB</td><td>3 (triple)</td><td>48 KB</td><td>R1–R4</td><td>8 cy</td></tr>
+            <tr><td>Pre-load total</td><td></td><td></td><td>56 KB</td><td></td><td></td></tr>
+        </table>
+
+        <h3 class="section-title">吞吐/延迟汇总</h3>
+        <table>
+            <tr><th>Format</th><th>K</th><th>Steps (N)</th><th>1st tile</th><th>Steady (baseline)</th><th>MAC util</th><th>Steady (pre-load)</th><th>MAC util</th></tr>
+            <tr><td>FP16</td><td>256</td><td>32</td><td>50</td><td>42</td><td>76.2%</td><td>34</td><td>94.1%</td></tr>
+            <tr><td>FP16</td><td>4096</td><td>512</td><td>530</td><td>522</td><td>98.1%</td><td>514</td><td>99.6%</td></tr>
+            <tr><td>FP8</td><td>256</td><td>16</td><td>34</td><td>26</td><td>61.5%</td><td>18</td><td>88.9%</td></tr>
+            <tr><td>FP8</td><td>4096</td><td>256</td><td>274</td><td>266</td><td>96.2%</td><td>258</td><td>99.2%</td></tr>
+            <tr><td>MXFP4</td><td>1024</td><td>16</td><td>34</td><td>26</td><td>61.5%</td><td>—</td><td>—</td></tr>
+            <tr><td>MXFP4</td><td>4096</td><td>64</td><td>82</td><td>74</td><td>86.5%</td><td>—</td><td>—</td></tr>
+        </table>
+
+        <div class="highlight-box">
+            <p><strong>GEMM Cycle 公式</strong>:<br>
+            First tile = 8 (OF) + N (compute) + 2 (flush) + 8 (AD) = <strong>N + 18</strong><br>
+            Steady state (baseline) = <strong>N + 10</strong> (AD &parallel; OF overlap)<br>
+            Steady state (pre-load, FP16/FP8 only) = <strong>N + 2</strong> (AD hidden behind next compute)<br>
+            where N = Nb &times; S (total OPA steps, S=4 for FP16/BF16/FP8, S=2 for MXFP4/HiFP4)
+            </p>
+        </div>
+
+        <h3 class="section-title">GEMM 计算器</h3>
+        <div class="card">
+            <div style="display:flex;flex-wrap:wrap;gap:1rem;align-items:center;margin:1rem 0">
+                <label style="color:var(--text-secondary);font-size:0.85rem">M:</label>
+                <input type="number" class="calc-input" id="gemm-m" value="8" min="1" max="65536">
+                <label style="color:var(--text-secondary);font-size:0.85rem">K:</label>
+                <input type="number" class="calc-input" id="gemm-k" value="4096" min="1" max="65536">
+                <label style="color:var(--text-secondary);font-size:0.85rem">N:</label>
+                <input type="number" class="calc-input" id="gemm-n" value="4096" min="1" max="65536">
+                <label style="color:var(--text-secondary);font-size:0.85rem">Format:</label>
+                <select class="calc-select" id="gemm-fmt">
+                    <option value="fp16">FP16</option>
+                    <option value="bf16">BF16</option>
+                    <option value="fp8">FP8</option>
+                    <option value="mxfp4">MXFP4</option>
+                </select>
+                <button class="calc-btn" onclick="calcGEMM()">计算</button>
+            </div>
+            <div class="calc-result" id="gemm-result" style="display:none">
+                <div class="grid-3">
+                    <div><div class="result-label">推荐 Mode</div><div class="result-value" id="gemm-mode">—</div></div>
+                    <div><div class="result-label">总 Cycles</div><div class="result-value" id="gemm-cycles">—</div></div>
+                    <div><div class="result-label">MAC 利用率</div><div class="result-value" id="gemm-util">—</div></div>
+                </div>
+            </div>
+        </div>
+
+        <h3 class="section-title">Cube ISA</h3>
+        <table>
+            <tr><th>Instruction</th><th>Operands</th><th>Function</th></tr>
+            <tr><td><span class="tag tag-orange">CUBE.CFG</span></td><td>mode, fmt [, Mactive]</td><td>Set operating mode (A/B) and data format. Persists until next CFG.</td></tr>
+            <tr><td><span class="tag tag-orange">CUBE.OPA</span></td><td>zd, Ta, Tb, Rn</td><td>Outer Product Accumulate: iterate Nb B-tiles. Executes Nb &times; S OPA steps.</td></tr>
+            <tr><td><span class="tag tag-orange">CUBE.DRAIN</span></td><td>zd, Tc</td><td>Drain accumulator buffer to tile register(s). Mode A: 2KB; Mode B: 16KB.</td></tr>
+            <tr><td><span class="tag tag-orange">CUBE.ZERO</span></td><td>zd</td><td>Zero accumulator buffer (1 cycle).</td></tr>
+            <tr><td><span class="tag tag-orange">CUBE.WAIT</span></td><td>zd</td><td>Stall until pending drain of buffer zd completes.</td></tr>
+        </table>
+    </div>
+
+    <div class="page" id="page-evaluation">
+        <h2 class="section-title">架构评价</h2>
+        <p class="section-desc">
+            对 Davinci 核心的六项关键设计决策进行评估，分析各自的优缺点与适用场景。
+        </p>
+
+        <div class="card" style="margin-bottom:2rem">
+            <h3>4.1 无 ROB 设计 <span class="tag tag-green" style="float:right">Score: 8/10</span></h3>
+            <div class="score-bar"><div class="score-fill" style="width:80%;background:var(--accent-green)"></div></div>
+            <div class="pro-con-grid">
+                <div class="pro-card">
+                    <h4>优势</h4>
+                    <ul>
+                        <li>更低的功耗和面积（无需 ROB CAM 比较逻辑）</li>
+                        <li>更简单的设计，减少验证复杂度</li>
+                        <li>Ref-count 释放比 ROB retire 更快（写回即释放，无需等顺序退休）</li>
+                        <li>等价于 Tomasulo 原始算法 (IBM 360/91, 1967)</li>
+                        <li>Tile RAT ready bit 替代 scoreboarding，消除 WAW/WAR</li>
+                    </ul>
+                </div>
+                <div class="con-card">
+                    <h4>劣势</h4>
+                    <ul>
+                        <li>不支持精确中断/异常，无法运行通用操作系统</li>
+                        <li>调试困难（无精确状态回溯）</li>
+                        <li>3-bit tile refcount（最大 7 个读者），限制了物理 tile 的共享范围</li>
+                        <li>仅适用于 run-to-completion kernel 场景</li>
+                        <li>Flush 时需恢复双 RAT checkpoint + 双 free-list head</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom:2rem">
+            <h3>4.2 统一 Tile 寄存器 (TRegFile-4K) <span class="tag tag-green" style="float:right">Score: 7/10</span></h3>
+            <div class="score-bar"><div class="score-fill" style="width:70%;background:var(--accent-green)"></div></div>
+            <div class="pro-con-grid">
+                <div class="pro-card">
+                    <h4>优势</h4>
+                    <ul>
+                        <li>消除 VRF/CRF 之间的数据移动</li>
+                        <li>1 MB 软件 scratchpad，支持深度 double-buffering</li>
+                        <li>Tile RAT 消除 WAW/WAR hazard</li>
+                        <li>Vector、Cube、MTE 共享统一寄存器，简化数据流</li>
+                        <li>8R+8W 端口提供高聚合带宽 (4KB/cy read + 4KB/cy write)</li>
+                    </ul>
+                </div>
+                <div class="con-card">
+                    <h4>劣势</h4>
+                    <ul>
+                        <li>~1.2 mm&sup2; 面积，占核心 37%（64 banks &times; 256&times;512b SRAM）</li>
+                        <li>8R+8W epoch 调度复杂（8-cycle calendar rotation）</li>
+                        <li>Cube active 时端口竞争（MXFP4 占用 5R + 1W）</li>
+                        <li>Epoch-locked 端口：一旦 latch，8 cycles 不可变</li>
+                        <li>224-entry tile free list 管理 overhead</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom:2rem">
+            <h3>4.3 外积累积 (outerCube) <span class="tag tag-green" style="float:right">Score: 8/10</span></h3>
+            <div class="score-bar"><div class="score-fill" style="width:80%;background:var(--accent-green)"></div></div>
+            <div class="pro-con-grid">
+                <div class="pro-card">
+                    <h4>优势</h4>
+                    <ul>
+                        <li>自然的 weight-stationary 数据复用（B operand reuse）</li>
+                        <li>B double-buffer 40KB staging + ping-pong accumulator 零停顿</li>
+                        <li>Dual-mode 灵活性（Mode A K-parallel / Mode B M-parallel）</li>
+                        <li>Sub-word partitioning 1:2:8 实现软件可控精度/性能权衡</li>
+                        <li>统一的 32-bit FP32 累加器，所有格式精度一致</li>
+                        <li>12.3 TFLOPS FP16, 98.3 TOPS MXFP4 @ 1.5 GHz</li>
+                    </ul>
+                </div>
+                <div class="con-card">
+                    <h4>劣势</h4>
+                    <ul>
+                        <li>Mode A M=4/8 利用率仅 50%（K-step alignment 浪费）</li>
+                        <li>K-step 对齐约束（非对齐 K 导致 ceiling 浪费）</li>
+                        <li>Inter-bank adder tree +1 cycle pipeline 延迟 (Mode A)</li>
+                        <li>Mode B 无 B broadcast MUX（每 bank 独立读 B，4 端口足够）</li>
+                        <li>4096 base MACs 面积 ~0.8 mm&sup2;（加 adder trees）</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom:2rem">
+            <h3>4.4 4 宽前端 + 单线程统一指令流 <span class="tag tag-green" style="float:right">Score: 7/10</span></h3>
+            <div class="score-bar"><div class="score-fill" style="width:70%;background:var(--accent-green)"></div></div>
+            <div class="pro-con-grid">
+                <div class="pro-card">
+                    <h4>优势</h4>
+                    <ul>
+                        <li>简化编译器/编程模型（单线程，统一地址空间）</li>
+                        <li>跨域 ILP（scalar + vector + cube + MTE 并行执行）</li>
+                        <li>统一 tile 管理（T0–T31 跨所有域共享）</li>
+                        <li>更小的前端面积和功耗</li>
+                        <li>4-wide decode + rename 足以覆盖 AI kernel 的标量开销</li>
+                    </ul>
+                </div>
+                <div class="con-card">
+                    <h4>劣势</h4>
+                    <ul>
+                        <li>4-wide 比 8-wide 竞争对手更窄，标量吞吐受限</li>
+                        <li>单线程吞吐天花板（无 SMT/多线程）</li>
+                        <li>Cube RS 仅 4 entries（极长延迟指令缓冲有限）</li>
+                        <li>前端阻塞时所有域同时受影响（RS full / free list empty）</li>
+                        <li>标量 IPC 典型值 2.5-3.0（受分支和 cache miss 影响）</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom:2rem">
+            <h3>4.5 多格式低精度 (MXFP4/HiFP4) <span class="tag tag-green" style="float:right">Score: 7/10</span></h3>
+            <div class="score-bar"><div class="score-fill" style="width:70%;background:var(--accent-green)"></div></div>
+            <div class="pro-con-grid">
+                <div class="pro-card">
+                    <h4>优势</h4>
+                    <ul>
+                        <li>98.3 TOPS (8&times; FP16)，极致吞吐</li>
+                        <li>软件可控精度/性能权衡（CUBE.CFG 切换格式）</li>
+                        <li>统一 FP32 累加器保证累加精度</li>
+                        <li>Sub-word partitioning 复用同一硬件（无额外乘法器面积）</li>
+                        <li>HiFP4 提供更高 mantissa 精度选项</li>
+                    </ul>
+                </div>
+                <div class="con-card">
+                    <h4>劣势</h4>
+                    <ul>
+                        <li>极低精度对模型质量的影响尚不明确</li>
+                        <li>MXFP4/HiFP4 生态系统不成熟（工具链、量化方法）</li>
+                        <li>量化感知训练工具链有限</li>
+                        <li>FP4 mode adder tree 更宽（8-input, 20 bits），增加延迟和功耗</li>
+                        <li>MXFP4 需要 4 B ports（FP16 只需 2），Cube active 时 Vector/MTE 端口减半</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom:2rem">
+            <h3>4.6 MTE 直连 L2 的 tile 数据通路 <span class="tag tag-green" style="float:right">Score: 8/10</span></h3>
+            <div class="score-bar"><div class="score-fill" style="width:80%;background:var(--accent-green)"></div></div>
+            <div class="pro-con-grid">
+                <div class="pro-card">
+                    <h4>优势</h4>
+                    <ul>
+                        <li>绕过 L1-D 减少 tile 数据移动层级</li>
+                        <li>32-entry outstanding buffer 支持深度 MLP（deep MLP layer）</li>
+                        <li>与 scalar LSU 独立，不竞争 L1-D 带宽</li>
+                        <li>64 B/cy 持续带宽，1 tile = 64 cycles from L2</li>
+                        <li>TRegFile-4K (1MB) 作为软件管理 scratchpad</li>
+                    </ul>
+                </div>
+                <div class="con-card">
+                    <h4>劣势</h4>
+                    <ul>
+                        <li>分离的 scalar/tile 路径增加编程复杂度</li>
+                        <li>TILE.LD 72cy (L2) 需要仔细的 double-buffering</li>
+                        <li>Store buffer OoO commit 可能引起内存排序问题</li>
+                        <li>TILE.LD/ST 默认无序，需要 FENCE 指令同步</li>
+                        <li>MTE 指令延迟高（72 cy L2 hit, 200-400 cy DRAM）</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <h3 class="section-title">综合评分</h3>
+        <div class="grid-3">
+            <div class="stat-card"><div class="stat-value">8/10</div><div class="stat-label">无 ROB 设计</div></div>
+            <div class="stat-card"><div class="stat-value">7/10</div><div class="stat-label">统一 Tile 寄存器</div></div>
+            <div class="stat-card"><div class="stat-value">8/10</div><div class="stat-label">outerCube MXU</div></div>
+            <div class="stat-card"><div class="stat-value">7/10</div><div class="stat-label">4 宽前端</div></div>
+            <div class="stat-card"><div class="stat-value">7/10</div><div class="stat-label">多格式低精度</div></div>
+            <div class="stat-card"><div class="stat-value">8/10</div><div class="stat-label">MTE 数据通路</div></div>
+        </div>
+        <div class="highlight-box" style="margin-top:1.5rem">
+            <p><strong>综合评价</strong>：Davinci 核心通过无 ROB 设计和统一 tile 寄存器实现了简洁高效的 OoO 执行引擎。
+            outerCube MXU 的 dual-mode 外积累积提供了卓越的矩阵计算吞吐。4 宽前端虽然吞吐受限，
+            但在 AI 推理场景中，标量操作仅占 ~15%，主要瓶颈在 Cube 和 MTE 带宽。
+            整体设计在面积效率、功耗和 AI 工作负载性能之间取得了良好平衡。</p>
+        </div>
+    </div>
+</main>
+
+    <script>
+    function navigateTo(pageName) {
+        document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+        document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+        var page = document.getElementById('page-' + pageName);
+        if (page) { page.classList.add('active'); }
+        var tabs = document.querySelectorAll('.nav-tab');
+        var pageNames = ['overview', 'pipeline', 'memory', 'outercube', 'evaluation'];
+        var idx = pageNames.indexOf(pageName);
+        if (idx >= 0 && tabs[idx]) { tabs[idx].classList.add('active'); }
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // Pipeline animation
+    var pipelineAnimId = null;
+    var pipelineStageIdx = 0;
+    var pipelineStages = null;
+
+    function animatePipeline() {
+        pipelineStages = document.querySelectorAll('#pipeline-viz .pipeline-stage');
+        if (pipelineStages.length === 0) return;
+        pipelineStageIdx = 0;
+        highlightPipelineStage();
+        pipelineAnimId = setInterval(function() {
+            pipelineStageIdx = (pipelineStageIdx + 1) % pipelineStages.length;
+            highlightPipelineStage();
+        }, 600);
+    }
+
+    function highlightPipelineStage() {
+        if (!pipelineStages) return;
+        pipelineStages.forEach(function(s) { s.classList.remove('active'); });
+        if (pipelineStages[pipelineStageIdx]) {
+            pipelineStages[pipelineStageIdx].classList.add('active');
+        }
+    }
+
+    function stopPipelineAnim() {
+        if (pipelineAnimId) { clearInterval(pipelineAnimId); pipelineAnimId = null; }
+        if (pipelineStages) { pipelineStages.forEach(function(s) { s.classList.remove('active'); }); }
+    }
+
+    // GEMM Calculator
+    function calcGEMM() {
+        var M = parseInt(document.getElementById('gemm-m').value) || 8;
+        var K = parseInt(document.getElementById('gemm-k').value) || 4096;
+        var N = parseInt(document.getElementById('gemm-n').value) || 4096;
+        var fmt = document.getElementById('gemm-fmt').value;
+
+        var S = (fmt === 'mxfp4') ? 2 : 4;
+        var Kmac = (fmt === 'mxfp4') ? 64 : (fmt === 'fp8') ? 16 : 8;
+        var KstepA = 8 * Kmac;
+        var KstepB = Kmac;
+        var mTile = 8;
+        var nTile = 64;
+
+        var modeA = (K >= 64 && M <= 32) || (K % KstepA === 0);
+        var modeB = M >= 64;
+        var useMode = (modeA && !modeB) ? 'A' : (modeB && !modeA) ? 'B' : (M >= 64 ? 'B' : 'A');
+
+        var Nb = Math.ceil(K / KstepA);
+        var Nsteps = Nb * S;
+        var firstTile = Nsteps + 18;
+        var steady = Nsteps + 10;
+        var totalOutputTiles = useMode === 'A' ? Math.ceil(M / mTile) * Math.ceil(N / nTile) : Math.ceil(M / 64) * Math.ceil(N / nTile);
+        var totalCycles = firstTile + (totalOutputTiles - 1) * steady;
+        var macActive = totalOutputTiles * Nsteps;
+        var totalAvailable = totalCycles;
+        var util = (macActive / totalAvailable * 100).toFixed(1);
+
+        document.getElementById('gemm-result').style.display = 'block';
+        document.getElementById('gemm-mode').textContent = 'Mode ' + useMode + (useMode === 'A' ? ' (K-parallel)' : ' (M-parallel)');
+        document.getElementById('gemm-cycles').textContent = totalCycles.toLocaleString();
+        document.getElementById('gemm-util').textContent = util + '%';
+    }
+
+    // Mode toggle (outerCube)
+    function switchMode(mode) {
+        var btns = document.querySelectorAll('#page-outercube .mode-btn');
+        btns.forEach(function(b) { b.classList.remove('active'); });
+        if (mode === 'A') {
+            btns[0].classList.add('active');
+            document.getElementById('mode-a-content').style.display = 'block';
+            document.getElementById('mode-b-content').style.display = 'none';
+        } else {
+            btns[1].classList.add('active');
+            document.getElementById('mode-a-content').style.display = 'none';
+            document.getElementById('mode-b-content').style.display = 'block';
+        }
+    }
+
+    // Port allocation scenario switcher
+    function switchPortScenario(scenario) {
+        var btns = document.querySelectorAll('#page-memory .mode-btn');
+        btns.forEach(function(b) { b.classList.remove('active'); });
+        var tables = ['mxfp4', 'fp16', 'idle'];
+        tables.forEach(function(t) {
+            var el = document.getElementById('port-table-' + t);
+            if (el) { el.style.display = 'none'; }
+        });
+        if (scenario === 'mxfp4') {
+            btns[0].classList.add('active');
+        } else if (scenario === 'fp16') {
+            btns[1].classList.add('active');
+        } else {
+            btns[2].classList.add('active');
+        }
+        var target = document.getElementById('port-table-' + scenario);
+        if (target) { target.style.display = 'block'; }
+    }
+
+    // Auto-start pipeline animation when pipeline page is shown
+    var origNavigateTo = navigateTo;
+    navigateTo = function(pageName) {
+        origNavigateTo(pageName);
+        stopPipelineAnim();
+        reRenderMermaid(pageName);
+        if (pageName === 'pipeline') {
+            setTimeout(animatePipeline, 500);
+        }
+        if (pageName === 'memory') {
+            setTimeout(function() {
+                initEpochCanvas();
+                drawEpochCanvas();
+            }, 300);
+        }
+    };
+
+    // Epoch Calendar Canvas Animation
+    var epochCycle = 0;
+    var epochPlaying = false;
+    var epochAnimId = null;
+    var epochCanvas = null;
+    var epochCtx = null;
+
+    function initEpochCanvas() {
+        epochCanvas = document.getElementById('epoch-canvas');
+        if (!epochCanvas) return;
+        epochCtx = epochCanvas.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        var rect = epochCanvas.getBoundingClientRect();
+        var w = Math.min(900, rect.width - 40);
+        var h = 420;
+        epochCanvas.width = w * dpr;
+        epochCanvas.height = h * dpr;
+        epochCanvas.style.width = w + 'px';
+        epochCanvas.style.height = h + 'px';
+        epochCtx.scale(dpr, dpr);
+    }
+
+    function drawEpochCanvas() {
+        if (!epochCtx || !epochCanvas) return;
+        var w = parseInt(epochCanvas.style.width);
+        var h = parseInt(epochCanvas.style.height);
+        var ctx = epochCtx;
+        ctx.clearRect(0, 0, w, h);
+
+        var groups = ['G0', 'G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7'];
+        var readPorts = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'];
+        var writePorts = ['W0', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7'];
+        var portLabels = readPorts.concat(writePorts);
+        var numPorts = 16;
+        var numRows = 8;
+
+        var labelW = 50;
+        var gridW = w - labelW - 30;
+        var gridH = 280;
+        var startX = labelW + 10;
+        var startY = 60;
+        var cellW = gridW / 8;
+        var cellH = gridH / numRows;
+
+        // Title
+        ctx.font = '600 14px -apple-system, sans-serif';
+        ctx.fillStyle = '#f1f5f9';
+        ctx.fillText('Epoch Calendar — Cycle ' + epochCycle + ' / 8', startX, 30);
+
+        // Current cycle indicator
+        var cx = startX + (epochCycle % 8) * cellW;
+        ctx.fillStyle = 'rgba(0,212,255,0.08)';
+        ctx.fillRect(cx, startY, cellW, gridH);
+
+        // Draw grid
+        ctx.font = '500 11px -apple-system, sans-serif';
+        for (var r = 0; r < numRows; r++) {
+            var label = portLabels[r];
+            var isWrite = r >= 8;
+            ctx.fillStyle = isWrite ? '#f59e0b' : '#00d4ff';
+            ctx.textAlign = 'right';
+            ctx.fillText(label, startX - 8, startY + r * cellH + cellH / 2 + 4);
+
+            for (var c = 0; c < 8; c++) {
+                var mappedGroup = (r % 8 + c) % 8;
+                var isActive = (c === epochCycle % 8);
+                var x = startX + c * cellW;
+                var y = startY + r * cellH;
+
+                // Cell background
+                if (isActive) {
+                    ctx.fillStyle = isWrite ? 'rgba(245,158,11,0.25)' : 'rgba(0,212,255,0.25)';
+                    ctx.strokeStyle = isWrite ? '#f59e0b' : '#00d4ff';
+                } else if (c < (epochCycle % 8)) {
+                    ctx.fillStyle = isWrite ? 'rgba(245,158,11,0.06)' : 'rgba(0,212,255,0.06)';
+                    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+                } else {
+                    ctx.fillStyle = 'rgba(255,255,255,0.02)';
+                    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+                }
+                ctx.lineWidth = isActive ? 2 : 1;
+                ctx.beginPath();
+                ctx.roundRect(x + 2, y + 2, cellW - 4, cellH - 4, 4);
+                ctx.fill();
+                ctx.stroke();
+
+                // Cell text
+                ctx.fillStyle = isActive ? '#f1f5f9' : 'rgba(255,255,255,0.3)';
+                ctx.font = isActive ? '600 12px -apple-system, sans-serif' : '400 11px -apple-system, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('G' + mappedGroup, x + cellW / 2, y + cellH / 2 + 4);
+            }
+        }
+
+        // Separator line between read and write ports
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(startX, startY + 8 * cellH / 2);
+        ctx.lineTo(startX + gridW, startY + 8 * cellH / 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Column headers (cycle numbers)
+        ctx.font = '500 11px -apple-system, sans-serif';
+        for (var c = 0; c < 8; c++) {
+            var x = startX + c * cellW + cellW / 2;
+            var isActive = (c === epochCycle % 8);
+            ctx.fillStyle = isActive ? '#00d4ff' : '#64748b';
+            ctx.textAlign = 'center';
+            ctx.fillText('cy ' + c, x, startY - 10);
+        }
+
+        // Legend
+        var ly = startY + gridH + 30;
+        ctx.font = '500 12px -apple-system, sans-serif';
+        ctx.textAlign = 'left';
+
+        ctx.fillStyle = '#00d4ff';
+        ctx.fillRect(startX, ly, 14, 14);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText('读端口 (R0–R7)', startX + 20, ly + 11);
+
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(startX + 170, ly, 14, 14);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText('写端口 (W0–W7)', startX + 190, ly + 11);
+
+        ctx.fillStyle = 'rgba(0,212,255,0.25)';
+        ctx.fillRect(startX + 360, ly, 14, 14);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText('当前 cycle 访问', startX + 380, ly + 11);
+
+        // Explanation
+        ctx.font = '400 11px -apple-system, sans-serif';
+        ctx.fillStyle = '#64748b';
+        var activeReadGroup = epochCycle % 8;
+        ctx.fillText('当前 cycle ' + epochCycle + ': 所有端口访问 bank-group G' + activeReadGroup +
+            ' | R0→G' + (0 + epochCycle) % 8 + ', R1→G' + (1 + epochCycle) % 8 + ', ..., W7→G' + (7 + epochCycle) % 8,
+            startX, ly + 35);
+    }
+
+    function epochStep(dir) {
+        epochCycle = (epochCycle + dir + 8) % 8;
+        drawEpochCanvas();
+    }
+
+    function epochTogglePlay() {
+        var btn = document.getElementById('epoch-play-btn');
+        if (epochPlaying) {
+            clearInterval(epochAnimId);
+            epochAnimId = null;
+            epochPlaying = false;
+            btn.textContent = '▶ 播放';
+            btn.classList.add('active');
+        } else {
+            epochPlaying = true;
+            btn.textContent = '⏸ 暂停';
+            btn.classList.remove('active');
+            epochAnimId = setInterval(function() {
+                epochCycle = (epochCycle + 1) % 8;
+                drawEpochCanvas();
+            }, 800);
+        }
+    }
+
+    function epochReset() {
+        if (epochPlaying) {
+            clearInterval(epochAnimId);
+            epochAnimId = null;
+            epochPlaying = false;
+            var btn = document.getElementById('epoch-play-btn');
+            if (btn) { btn.textContent = '▶ 播放'; btn.classList.add('active'); }
+        }
+        epochCycle = 0;
+        drawEpochCanvas();
+    }
+
+    // Mermaid manual rendering with error recovery.
+    // Since startOnLoad is disabled, we render diagrams on-demand when pages become visible.
+    // Each diagram is rendered individually via mermaid.render() for robust error handling.
+    var mermaidRenderedPages = {};
+    var mermaidIdCounter = 0;
+
+    function renderMermaidInPage(pageName) {
+        if (typeof mermaid === 'undefined' || !pageName) return Promise.resolve();
+        if (mermaidRenderedPages[pageName]) return Promise.resolve();
+        var page = document.getElementById('page-' + pageName);
+        if (!page) return Promise.resolve();
+
+        var pres = page.querySelectorAll('pre.mermaid');
+        if (pres.length === 0) {
+            mermaidRenderedPages[pageName] = true;
+            return Promise.resolve();
+        }
+
+        // Process each <pre> individually for isolation
+        var promises = [];
+        pres.forEach(function(pre) {
+            if (pre.hasAttribute('data-processed')) return;
+            var source = pre.textContent.trim();
+            if (!source) return;
+            var id = 'mermaid-page-' + pageName + '-' + (mermaidIdCounter++);
+            promises.push(
+                mermaid.render(id, source).then(function(result) {
+                    var container = pre.parentElement;
+                    if (container) {
+                        var wrapper = document.createElement('div');
+                        wrapper.innerHTML = result.svg;
+                        var svg = wrapper.firstElementChild;
+                        if (svg) {
+                            svg.style.maxWidth = '100%';
+                            svg.style.height = 'auto';
+                            pre.replaceWith(svg);
+                        }
+                    }
+                }).catch(function(err) {
+                    console.warn('Mermaid render error:', err);
+                    // Show error message in the container
+                    var container = pre.parentElement;
+                    if (container) {
+                        var errDiv = document.createElement('div');
+                        errDiv.style.cssText = 'color:#f87171;padding:1rem;font-size:0.85rem;';
+                        errDiv.textContent = 'Diagram render error: ' + (err.message || err);
+                        pre.replaceWith(errDiv);
+                    }
+                })
+            );
+        });
+
+        return Promise.all(promises).then(function() {
+            mermaidRenderedPages[pageName] = true;
+        });
+    }
+
+    // Called from navigateTo wrapper
+    function reRenderMermaid(pageName) {
+        renderMermaidInPage(pageName);
+    }
+
+    // Render the initial (active) page on load
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            renderMermaidInPage('overview');
+        }, 100);
+    });
+    </script>
+</body>
+</html>
